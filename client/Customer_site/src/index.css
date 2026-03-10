@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 13%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 13%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 13%;
+
+    --primary: 0 79% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 100% 50%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 13%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 0 79% 55%;
+
+    --radius: 0.5rem;
+
+    --sale: 0 79% 55%;
+    --sale-foreground: 0 0% 100%;
+    --deal-bg: 350 100% 97%;
+    --star: 45 100% 51%;
+    --success: 142 71% 45%;
+    --badge-choice: 0 79% 55%;
+    --badge-sale: 30 100% 50%;
+    --free-shipping: 142 71% 45%;
+    --hero-gradient: linear-gradient(135deg, hsl(350, 100%, 93%) 0%, hsl(20, 100%, 95%) 50%, hsl(350, 100%, 90%) 100%);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    overflow-x: hidden;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .badge-choice {
+    @apply bg-primary text-primary-foreground text-xs font-bold px-1.5 py-0.5 rounded;
+  }
+  .badge-sale {
+    @apply bg-secondary text-secondary-foreground text-xs font-bold px-1.5 py-0.5 rounded;
+  }
+  .badge-free-shipping {
+    @apply text-xs font-medium px-2 py-0.5 rounded;
+    background: hsl(var(--free-shipping));
+    color: hsl(var(--primary-foreground));
+  }
+  .price-current {
+    @apply text-foreground font-bold;
+  }
+  .price-original {
+    @apply text-muted-foreground line-through text-sm;
+  }
+  .price-discount {
+    @apply text-primary font-semibold text-sm;
+  }
+  .product-card {
+    @apply bg-card rounded-lg overflow-hidden border border-border hover:shadow-lg transition-shadow duration-200 cursor-pointer block;
+    display: inline-block;
+    width: 100%;
+  }
+  .section-title {
+    @apply text-2xl font-bold text-foreground text-center;
+  }
+  .nav-category {
+    @apply text-sm font-medium text-foreground hover:text-primary transition-colors cursor-pointer;
+  }
+  .nav-category-active {
+    @apply text-sm font-bold text-primary;
+  }
+  .deal-card {
+    @apply bg-card rounded-xl border border-border p-4;
+  }
+  .hero-banner {
+    background: var(--hero-gradient);
+  }
+  .welcome-deal-box {
+    @apply border-2 rounded-lg p-4;
+    border-color: hsl(var(--primary) / 0.3);
+  }
+
+  /* Auth page styles */
+  .auth-gradient {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.8) 50%, hsl(var(--secondary)) 100%);
+  }
+
+  .auth-blob {
+    @apply absolute rounded-full;
+    filter: blur(80px);
+    opacity: 0.4;
+  }
+  .auth-blob-1 {
+    @apply w-96 h-96 -top-20 -left-20;
+    background: hsl(var(--secondary));
+    animation: auth-morph 8s ease-in-out infinite;
+  }
+  .auth-blob-2 {
+    @apply w-80 h-80 top-1/2 right-0;
+    background: hsl(var(--primary));
+    animation: auth-morph 10s ease-in-out infinite reverse;
+  }
+  .auth-blob-3 {
+    @apply w-64 h-64 bottom-0 left-1/3;
+    background: hsl(var(--destructive));
+    animation: auth-morph 12s ease-in-out infinite 2s;
+  }
+
+  .auth-btn-glow {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.3);
+  }
+  .auth-btn-glow:hover {
+    box-shadow: 0 0 30px hsl(var(--primary) / 0.5);
+  }
+}
+
+@keyframes auth-morph {
+  0%, 100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; transform: translate(0, 0) rotate(0deg); }
+  33% { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; transform: translate(30px, -20px) rotate(120deg); }
+  66% { border-radius: 50% 60% 30% 60% / 30% 60% 70% 40%; transform: translate(-20px, 20px) rotate(240deg); }
+}
+
+@keyframes auth-float {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-20px) rotate(5deg); }
+}
+
+.auth-float {
+  animation: auth-float 6s ease-in-out infinite;
+}
+
+@keyframes auth-particle {
+  0%, 100% { opacity: 0; transform: scale(0); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.auth-particle {
+  animation: auth-particle 4s ease-in-out infinite;
+}
+
+@keyframes auth-field-enter {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.auth-field-enter {
+  animation: auth-field-enter 0.3s ease-out;
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+
+/* Prevent accidental zoom on images and interactive elements */
+img {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  pointer-events: auto;
+}
+
+/* Prevent double-tap zoom on touch devices */
+* {
+  touch-action: manipulation;
+}
