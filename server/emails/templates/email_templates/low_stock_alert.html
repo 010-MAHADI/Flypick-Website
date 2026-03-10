@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Low Stock Warning</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); color: white; padding: 30px 20px; text-align: center; }
+        .header h1 { font-size: 28px; font-weight: 300; margin-bottom: 10px; }
+        .header p { font-size: 16px; opacity: 0.9; }
+        .content { padding: 40px 30px; }
+        .content h2 { color: #333; font-size: 24px; margin-bottom: 20px; font-weight: 600; }
+        .content p { margin-bottom: 15px; font-size: 16px; line-height: 1.6; }
+        .button { display: inline-block; background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: 600; margin: 20px 0; }
+        .warning-box { background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); color: white; padding: 25px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .warning-box h3 { font-size: 22px; margin-bottom: 10px; }
+        .product-info { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .product-info h4 { color: #fd7e14; margin-bottom: 15px; font-size: 18px; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 8px 0; border-bottom: 1px solid #e9ecef; }
+        .info-row:last-child { border-bottom: none; }
+        .info-label { font-weight: 600; color: #666; }
+        .info-value { color: #333; }
+        .stock-indicator { background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center; }
+        .stock-number { font-size: 36px; font-weight: 600; color: #fd7e14; margin-bottom: 10px; }
+        .action-section { background-color: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .action-section h4 { color: #0c5460; margin-bottom: 15px; }
+        .footer { background-color: #333; color: white; padding: 30px 20px; text-align: center; }
+        .footer p { margin-bottom: 10px; opacity: 0.8; }
+        @media only screen and (max-width: 600px) {
+            .email-container { width: 100% !important; }
+            .content { padding: 20px 15px; }
+            .header { padding: 20px 15px; }
+            .header h1 { font-size: 24px; }
+            .info-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1>⚠️ Low Stock Warning</h1>
+            <p>Your product is running low on inventory</p>
+        </div>
+        
+        <div class="content">
+            <h2>Hi {{ seller_name }},</h2>
+            
+            <div class="warning-box">
+                <h3>📉 Low Stock Alert!</h3>
+                <p>One of your products is running low on stock and may sell out soon.</p>
+            </div>
+            
+            <p>We wanted to give you a heads up so you can restock before it runs out completely.</p>
+            
+            <div class="product-info">
+                <h4>📦 Product Details:</h4>
+                
+                <div class="info-row">
+                    <span class="info-label">Product Name:</span>
+                    <span class="info-value">{{ product_name }}</span>
+                </div>
+                
+                <div class="info-row">
+                    <span class="info-label">SKU:</span>
+                    <span class="info-value">{{ product_sku }}</span>
+                </div>
+                
+                <div class="info-row">
+                    <span class="info-label">Low Stock Threshold:</span>
+                    <span class="info-value">{{ threshold }} units</span>
+                </div>
+            </div>
+            
+            <div class="stock-indicator">
+                <div class="stock-number">{{ current_stock }}</div>
+                <div style="color: #856404; font-weight: 600;">Units Remaining</div>
+                <div style="color: #666; font-size: 14px; margin-top: 5px;">
+                    ⚠️ Below your low stock threshold of {{ threshold }} units
+                </div>
+            </div>
+            
+            <div class="action-section">
+                <h4>📋 Recommended Actions:</h4>
+                <ul style="margin-left: 20px;">
+                    <li><strong>Restock now</strong> - Add more inventory to prevent stockouts</li>
+                    <li><strong>Review sales velocity</strong> - Check how quickly this product is selling</li>
+                    <li><strong>Adjust threshold</strong> - Update your low stock alert threshold if needed</li>
+                    <li><strong>Plan ahead</strong> - Set up automatic reordering for popular items</li>
+                </ul>
+            </div>
+            
+            <p><strong>📊 Why this matters:</strong></p>
+            <ul style="margin-left: 20px; margin-bottom: 20px;">
+                <li>Prevents lost sales due to stockouts</li>
+                <li>Maintains product visibility in search results</li>
+                <li>Keeps customers satisfied with product availability</li>
+                <li>Helps maintain your seller performance metrics</li>
+            </ul>
+            
+            <p>You can update your inventory levels from your seller dashboard:</p>
+            
+            <a href="{{ product_url }}" class="button">Update Stock Now</a>
+            
+            <p style="text-align: center; margin: 20px 0;">
+                <a href="{{ dashboard_url }}" style="color: #fd7e14; text-decoration: none;">Manage All Products →</a>
+            </p>
+            
+            <p><strong>💡 Pro Tip:</strong> Consider setting up automatic low stock alerts for all your products to stay ahead of inventory issues!</p>
+            
+            <p>If you need help with inventory management or have questions about stock optimization, our seller support team is ready to assist.</p>
+            
+            <p>Best regards,</p>
+            <p><strong>The {{ site_name }} Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ current_year }} {{ site_name }}. All rights reserved.</p>
+            <p>You received this email because you are a seller on our platform.</p>
+            <p style="font-size: 12px; opacity: 0.6;">
+                If you no longer wish to receive these emails, you can 
+                <a href="#" style="color: #ffc107;">manage your notification preferences</a>.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

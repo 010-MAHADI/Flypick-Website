@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Order Received - {{ order_id }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #fd7e14 0%, #e83e8c 100%); color: white; padding: 30px 20px; text-align: center; }
+        .header h1 { font-size: 28px; font-weight: 300; margin-bottom: 10px; }
+        .header p { font-size: 16px; opacity: 0.9; }
+        .content { padding: 40px 30px; }
+        .content h2 { color: #333; font-size: 24px; margin-bottom: 20px; font-weight: 600; }
+        .content p { margin-bottom: 15px; font-size: 16px; line-height: 1.6; }
+        .button { display: inline-block; background: linear-gradient(135deg, #fd7e14 0%, #e83e8c 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: 600; margin: 20px 0; }
+        .order-alert { background: linear-gradient(135deg, #fd7e14 0%, #e83e8c 100%); color: white; padding: 20px; border-radius: 8px; margin: 20px 0; text-align: center; }
+        .order-alert h3 { font-size: 20px; margin-bottom: 10px; }
+        .order-details { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .order-header { display: flex; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #fd7e14; }
+        .order-id { font-size: 18px; font-weight: 600; color: #fd7e14; }
+        .order-date { color: #666; }
+        .customer-info { background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 15px 0; }
+        .customer-info h4 { color: #856404; margin-bottom: 10px; }
+        .order-item { display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid #e9ecef; }
+        .order-item:last-child { border-bottom: none; }
+        .item-details { flex: 1; }
+        .item-name { font-weight: 600; color: #333; margin-bottom: 5px; }
+        .item-quantity { color: #666; font-size: 14px; }
+        .item-price { font-weight: 600; color: #fd7e14; font-size: 16px; }
+        .address-section { background-color: #f8f9fa; border-left: 4px solid #fd7e14; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+        .address-title { font-weight: 600; color: #fd7e14; margin-bottom: 10px; }
+        .footer { background-color: #333; color: white; padding: 30px 20px; text-align: center; }
+        .footer p { margin-bottom: 10px; opacity: 0.8; }
+        @media only screen and (max-width: 600px) {
+            .email-container { width: 100% !important; }
+            .content { padding: 20px 15px; }
+            .header { padding: 20px 15px; }
+            .header h1 { font-size: 24px; }
+            .order-header { flex-direction: column; text-align: center; }
+            .order-item { flex-direction: column; align-items: flex-start; }
+            .item-price { margin-top: 5px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1>🎉 New Order!</h1>
+            <p>You have received a new order</p>
+        </div>
+        
+        <div class="content">
+            <h2>Hi {{ seller_name }},</h2>
+            
+            <div class="order-alert">
+                <h3>📦 New Order Received!</h3>
+                <p>A customer has just placed an order for your products. Please review the details below and prepare the items for shipment.</p>
+            </div>
+            
+            <div class="order-details">
+                <div class="order-header">
+                    <div>
+                        <div class="order-id">Order #{{ order_id }}</div>
+                        <div class="order-date">Placed on {{ order_date }}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-weight: 600; color: #fd7e14;">{{ payment_method|upper }}</div>
+                        <div style="color: #666; font-size: 14px;">Payment Method</div>
+                    </div>
+                </div>
+                
+                <div class="customer-info">
+                    <h4>👤 Customer Information:</h4>
+                    <p><strong>Name:</strong> {{ customer_name }}</p>
+                    <p><strong>Email:</strong> {{ customer_email }}</p>
+                </div>
+                
+                <h3 style="margin-bottom: 15px; color: #333;">📋 Your Items in this Order:</h3>
+                
+                {% for item in items %}
+                <div class="order-item">
+                    <div class="item-details">
+                        <div class="item-name">{{ item.name }}</div>
+                        <div class="item-quantity">Quantity: {{ item.quantity }}</div>
+                    </div>
+                    <div class="item-price">${{ item.total }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            
+            <div class="address-section">
+                <div class="address-title">📍 Shipping Address:</div>
+                <div><strong>{{ shipping_address.name }}</strong></div>
+                <div>📞 {{ shipping_address.phone }}</div>
+                <div>🏠 {{ shipping_address.address }}</div>
+                <div>🌍 {{ shipping_address.country }}</div>
+            </div>
+            
+            <p><strong>⚡ Action Required:</strong></p>
+            <ul style="margin-left: 20px; margin-bottom: 20px;">
+                <li>Review the order details carefully</li>
+                <li>Prepare the items for shipment</li>
+                <li>Update the order status once shipped</li>
+                <li>Provide tracking information if available</li>
+            </ul>
+            
+            <p>You can manage this order and update its status from your seller dashboard:</p>
+            
+            <a href="{{ dashboard_url }}" class="button">Manage Order</a>
+            
+            <p><strong>💡 Pro Tip:</strong> Quick order processing leads to better customer satisfaction and higher ratings!</p>
+            
+            <p>If you have any questions about this order, please contact our seller support team.</p>
+            
+            <p>Happy selling!</p>
+            <p><strong>The {{ site_name }} Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ current_year }} {{ site_name }}. All rights reserved.</p>
+            <p>You received this email because you are a seller on our platform.</p>
+            <p style="font-size: 12px; opacity: 0.6;">
+                If you no longer wish to receive these emails, you can 
+                <a href="#" style="color: #fd7e14;">manage your notification preferences</a>.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

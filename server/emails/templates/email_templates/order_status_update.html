@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Update - {{ order_id }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .header { background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%); color: white; padding: 30px 20px; text-align: center; }
+        .header h1 { font-size: 28px; font-weight: 300; margin-bottom: 10px; }
+        .header p { font-size: 16px; opacity: 0.9; }
+        .content { padding: 40px 30px; }
+        .content h2 { color: #333; font-size: 24px; margin-bottom: 20px; font-weight: 600; }
+        .content p { margin-bottom: 15px; font-size: 16px; line-height: 1.6; }
+        .button { display: inline-block; background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%); color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: 600; margin: 20px 0; }
+        .status-update { background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 25px; margin: 20px 0; text-align: center; }
+        .status-badge { display: inline-block; background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%); color: white; padding: 10px 20px; border-radius: 25px; font-weight: 600; font-size: 18px; margin: 10px 0; }
+        .status-message { font-size: 16px; color: #666; margin-top: 15px; }
+        .order-info { background-color: #f8f9fa; border-left: 4px solid #17a2b8; padding: 20px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+        .order-info h4 { color: #17a2b8; margin-bottom: 10px; }
+        .footer { background-color: #333; color: white; padding: 30px 20px; text-align: center; }
+        .footer p { margin-bottom: 10px; opacity: 0.8; }
+        @media only screen and (max-width: 600px) {
+            .email-container { width: 100% !important; }
+            .content { padding: 20px 15px; }
+            .header { padding: 20px 15px; }
+            .header h1 { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1>Order Update</h1>
+            <p>Your order status has been updated</p>
+        </div>
+        
+        <div class="content">
+            <h2>Hi {{ user_name }},</h2>
+            
+            <p>We have an update on your order. Here's what's happening:</p>
+            
+            <div class="status-update">
+                {% if old_status %}
+                <div style="color: #666; margin-bottom: 10px;">
+                    Previous Status: <span style="text-decoration: line-through;">{{ old_status }}</span>
+                </div>
+                {% endif %}
+                
+                <div class="status-badge">{{ new_status }}</div>
+                
+                <div class="status-message">
+                    {{ status_message }}
+                </div>
+            </div>
+            
+            <div class="order-info">
+                <h4>Order Details:</h4>
+                <p><strong>Order ID:</strong> {{ order_id }}</p>
+                <p><strong>Order Date:</strong> {{ order_date }}</p>
+                <p><strong>Current Status:</strong> {{ new_status }}</p>
+            </div>
+            
+            {% if new_status == 'Shipped' %}
+            <p>🚚 <strong>Great news!</strong> Your order is on its way to you. You should receive it within the next few business days.</p>
+            {% elif new_status == 'Delivered' %}
+            <p>🎉 <strong>Congratulations!</strong> Your order has been successfully delivered. We hope you love your purchase!</p>
+            {% elif new_status == 'Processing' %}
+            <p>📦 <strong>Good news!</strong> Your order is being prepared for shipment. We'll notify you as soon as it's on its way.</p>
+            {% elif new_status == 'Cancelled' %}
+            <p>❌ <strong>Order Cancelled:</strong> Your order has been cancelled. If you have any questions, please contact our support team.</p>
+            {% endif %}
+            
+            <p>You can view your complete order details and track its progress by clicking the button below:</p>
+            
+            <a href="{{ tracking_url }}" class="button">View Order Details</a>
+            
+            <p>If you have any questions or concerns about your order, please don't hesitate to reach out to our customer support team.</p>
+            
+            <p>Thank you for choosing {{ site_name }}!</p>
+            <p><strong>The {{ site_name }} Team</strong></p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; {{ current_year }} {{ site_name }}. All rights reserved.</p>
+            <p>You received this email because you have an order with us.</p>
+            <p style="font-size: 12px; opacity: 0.6;">
+                If you no longer wish to receive these emails, you can 
+                <a href="#" style="color: #17a2b8;">unsubscribe here</a>.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
