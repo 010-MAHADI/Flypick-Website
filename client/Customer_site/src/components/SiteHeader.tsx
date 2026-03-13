@@ -1,9 +1,11 @@
-import { Search, Camera, User, ShoppingCart, Heart, Menu, X, Home, Package, LogOut } from "lucide-react";
+import { Search, Camera, User, ShoppingCart, Heart, Menu, X, Home, Package, LogOut, Bell } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useCart } from "@/context/CartContext";
 import { useAuth } from "@/context/AuthContext";
 import { useProducts } from "@/hooks/useProducts";
+import { useUnreadCount } from "@/hooks/useNotifications";
+import NotificationBell from "@/components/NotificationBell";
 
 const SiteHeader = () => {
   const [searchQuery, setSearchQuery] = useState("");
@@ -16,6 +18,7 @@ const SiteHeader = () => {
   const { totalItems } = useCart();
   const { isLoggedIn, userName, profilePhoto, logout } = useAuth();
   const { data: products = [] } = useProducts();
+  const { data: unreadCount = 0 } = useUnreadCount();
 
   const categories = Array.from(
     new Set(
@@ -78,8 +81,21 @@ const SiteHeader = () => {
           </form>
 
           <div className="hidden md:flex items-center gap-5 text-sm">
+            <NotificationBell />
             <Link to="/wishlist" className="text-muted-foreground hover:text-foreground">
               <Heart className="w-5 h-5" />
+            </Link>
+          </div>
+
+          {/* Mobile notification bell */}
+          <div className="md:hidden">
+            <Link to="/notifications" className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">
+              <Bell className="w-5 h-5" />
+              {isLoggedIn && unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </Link>
           </div>
 
@@ -156,6 +172,15 @@ const SiteHeader = () => {
                     <Package className="w-5 h-5 text-muted-foreground" />
                     <span className="text-sm font-medium">My Orders</span>
                   </Link>
+                  <Link to="/notifications" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted relative">
+                    <Bell className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">Notifications</span>
+                    {unreadCount > 0 && (
+                      <span className="ml-auto bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    )}
+                  </Link>
                   <Link to="/wishlist" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-muted">
                     <Heart className="w-5 h-5 text-muted-foreground" />
                     <span className="text-sm font-medium">Wishlist</span>
@@ -205,7 +230,7 @@ const SiteHeader = () => {
             { to: "/", icon: Home, label: "Home", match: (p: string) => p === "/" },
             { to: "/search?q=", icon: Search, label: "Search", match: (p: string) => p === "/search" },
             { to: "/cart", icon: ShoppingCart, label: "Cart", match: (p: string) => p === "/cart" },
-            { to: "/wishlist", icon: Heart, label: "Wishlist", match: (p: string) => p === "/wishlist" },
+            { to: "/orders", icon: Package, label: "Orders", match: (p: string) => p === "/orders" },
             { to: isLoggedIn ? "/account" : "/auth", icon: User, label: "Account", match: (p: string) => p === "/account" || p === "/auth" },
           ].map((item) => {
             const active = item.match(location.pathname);

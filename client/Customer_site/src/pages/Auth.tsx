@@ -21,6 +21,8 @@ const Auth = () => {
   const [forgotSent, setForgotSent] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastSubmitTime, setLastSubmitTime] = useState(0);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -46,10 +48,21 @@ const Auth = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent double submissions with debounce
+    const now = Date.now();
+    if (isSubmitting || (now - lastSubmitTime < 2000)) {
+      return;
+    }
+    
+    setLastSubmitTime(now);
+    
     if (mode === "forgot") {
       setForgotSent(true);
       return;
     }
+    
+    setIsSubmitting(true);
     
     try {
       if (mode === "login") {
@@ -65,26 +78,58 @@ const Auth = () => {
         }
       } else {
         // Customer registration
+        const timestamp = Date.now().toString().slice(-4); // Last 4 digits of timestamp
+        const baseUsername = email.split('@')[0];
+        const uniqueUsername = `${baseUsername}_${timestamp}`;
+        
         const response = await api.post("/auth/customer/register/", {
           email: email,
           password: password,
-          username: email.split('@')[0], // Use email prefix as username
+          username: uniqueUsername, // Use timestamped username for uniqueness
           customer_profile: {
             first_name: name.split(' ')[0] || '',
             last_name: name.split(' ').slice(1).join(' ') || ''
           }
         });
         
+        // Small delay before auto-login to prevent race conditions
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
         // Auto-login after successful registration
         await login(email, password);
         navigate("/account");
       }
     } catch (error: any) {
-      const errorMessage = error?.response?.data?.detail || 
-                          error?.response?.data?.email?.[0] ||
-                          error?.response?.data?.password?.[0] ||
-                          (mode === "login" ? "Login failed. Please check your credentials." : "Registration failed. Please try again.");
+      console.error('Auth error:', error);
+      
+      let errorMessage = "";
+      
+      if (error?.response?.data) {
+        const errorData = error.response.data;
+        
+        // Handle specific field errors
+        if (errorData.username) {
+          errorMessage = Array.isArray(errorData.username) ? errorData.username[0] : errorData.username;
+        } else if (errorData.email) {
+          errorMessage = Array.isArray(errorData.email) ? errorData.email[0] : errorData.email;
+        } else if (errorData.password) {
+          errorMessage = Array.isArray(errorData.password) ? errorData.password[0] : errorData.password;
+        } else if (errorData.error) {
+          errorMessage = errorData.error;
+        } else if (errorData.detail) {
+          errorMessage = errorData.detail;
+        } else if (errorData.non_field_errors) {
+          errorMessage = Array.isArray(errorData.non_field_errors) ? errorData.non_field_errors[0] : errorData.non_field_errors;
+        } else {
+          errorMessage = mode === "login" ? "Login failed. Please check your credentials." : "Registration failed. Please try again.";
+        }
+      } else {
+        errorMessage = mode === "login" ? "Login failed. Please check your credentials." : "Registration failed. Please try again.";
+      }
+      
       alert(errorMessage);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -215,9 +260,10 @@ const Auth = () => {
 
                   <button
                     type="submit"
-                    className="w-full bg-primary text-primary-foreground font-bold py-3.5 rounded-xl hover:opacity-90 transition-all duration-200 flex items-center justify-center gap-2 group auth-btn-glow"
+                    disabled={isSubmitting}
+                    className="w-full bg-primary text-primary-foreground font-bold py-3.5 rounded-xl hover:opacity-90 transition-all duration-200 flex items-center justify-center gap-2 group auth-btn-glow disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Send reset link
+                    {isSubmitting ? "Sending..." : "Send reset link"}
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
 
@@ -297,9 +343,13 @@ const Auth = () => {
 
                   <button
                     type="submit"
-                    className="w-full bg-primary text-primary-foreground font-bold py-3.5 rounded-xl hover:opacity-90 transition-all duration-200 flex items-center justify-center gap-2 group auth-btn-glow"
+                    disabled={isSubmitting}
+                    className="w-full bg-primary text-primary-foreground font-bold py-3.5 rounded-xl hover:opacity-90 transition-all duration-200 flex items-center justify-center gap-2 group auth-btn-glow disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isLogin ? "Sign in" : "Create account"}
+                    {isSubmitting 
+                      ? (isLogin ? "Signing in..." : "Creating account...") 
+                      : (isLogin ? "Sign in" : "Create account")
+                    }
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                   </button>
                 </form>

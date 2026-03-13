@@ -17,7 +17,7 @@ export interface Product {
     trend?: number;
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://52.221.195.134/api/';
 const backendOrigin = apiBaseUrl.replace(/\/api\/?$/, '');
 
 const normalizeMediaUrl = (url: string | null | undefined): string | null => {

@@ -98,6 +98,12 @@ class CustomerRegisterSerializer(serializers.ModelSerializer):
             "customer_profile",
         ]
 
+    def validate_username(self, value):
+        """Validate username uniqueness"""
+        if value and User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
+        return value
+
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
@@ -111,12 +117,13 @@ class CustomerRegisterSerializer(serializers.ModelSerializer):
         # Generate username from email if not provided
         if not username:
             username = email.split('@')[0]
-            # Ensure username is unique
-            counter = 1
-            original_username = username
-            while User.objects.filter(username=username).exists():
-                username = f"{original_username}{counter}"
-                counter += 1
+        
+        # Ensure username is unique (this is a safety check)
+        counter = 1
+        original_username = username
+        while User.objects.filter(username=username).exists():
+            username = f"{original_username}{counter}"
+            counter += 1
 
         # Create user with Customer role
         user = User.objects.create_user(
@@ -126,10 +133,9 @@ class CustomerRegisterSerializer(serializers.ModelSerializer):
             role='Customer',
         )
 
-        # Create customer profile if data provided
-        if customer_profile_data:
-            from .models import CustomerProfile
-            CustomerProfile.objects.create(user=user, **customer_profile_data)
+        # Always create customer profile for new customers (use get_or_create to avoid conflicts)
+        from .models import CustomerProfile
+        CustomerProfile.objects.get_or_create(user=user, defaults=customer_profile_data)
 
         return user
 

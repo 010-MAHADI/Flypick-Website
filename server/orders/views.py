@@ -9,6 +9,17 @@ from users.roles import is_admin_user
 class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action == 'product_coupons':
+            # Allow public access to product coupons
+            permission_classes = [permissions.AllowAny]
+        else:
+            permission_classes = [permissions.IsAuthenticated]
+        return [permission() for permission in permission_classes]
+    
     def get_queryset(self):
         user = self.request.user
         shop_id = self.request.query_params.get('shop')

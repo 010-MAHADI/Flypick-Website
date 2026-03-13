@@ -1,6 +1,23 @@
 # Environment variables
 .env
 *.env
+.env.local
+.env.production
+.env.staging
+.env.development
+.env.test
+
+# Server environment files
+server/.env
+server/.env.local
+server/.env.production
+server/.env.staging
+
+# Client environment files
+client/*/.env
+client/*/.env.local
+client/*/.env.production
+client/*/.env.staging
 
 # Python
 __pycache__/

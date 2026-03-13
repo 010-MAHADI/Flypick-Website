@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
 // API configuration
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://seller.flypick.shop/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({

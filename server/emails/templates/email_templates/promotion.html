@@ -1,0 +1,107 @@
+{% extends "email_templates/base.html" %}
+
+{% block title %}{{ campaign.title }}{% endblock %}
+
+{% block content %}
+<div style="background-color: #f8f9fa; padding: 40px 0;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+        
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 28px; font-weight: bold;">{{ campaign.title }}</h1>
+            {% if shop %}
+            <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0; font-size: 16px;">{{ shop.name }}</p>
+            {% endif %}
+        </div>
+
+        <!-- Main Content -->
+        <div style="padding: 40px 30px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h2 style="color: #333; margin: 0 0 15px 0; font-size: 24px;">Hello {{ user.first_name|default:"Valued Customer" }}!</h2>
+                <p style="color: #666; font-size: 16px; line-height: 1.6; margin: 0;">{{ campaign.message }}</p>
+            </div>
+
+            {% if products %}
+            <!-- Featured Products -->
+            <div style="margin: 30px 0;">
+                <h3 style="color: #333; text-align: center; margin-bottom: 25px; font-size: 20px;">Featured Products</h3>
+                
+                <div style="display: table; width: 100%; border-collapse: separate; border-spacing: 15px;">
+                    {% for product in products %}
+                    {% if products|length == 1 %}
+                    <div style="display: table-cell; vertical-align: top; width: 100%; text-align: center; background-color: #f8f9fa; border-radius: 8px; padding: 20px;">
+                    {% elif products|length == 2 %}
+                    <div style="display: table-cell; vertical-align: top; width: 50%; text-align: center; background-color: #f8f9fa; border-radius: 8px; padding: 20px;">
+                    {% else %}
+                    <div style="display: table-cell; vertical-align: top; width: 33.33%; text-align: center; background-color: #f8f9fa; border-radius: 8px; padding: 20px;">
+                    {% endif %}
+                        {% if product.image_url %}
+                        <img src="{{ product.image_url }}" alt="{{ product.title }}" style="width: 100%; max-width: 150px; height: 150px; object-fit: cover; border-radius: 8px; margin-bottom: 15px;">
+                        {% endif %}
+                        
+                        <h4 style="color: #333; margin: 0 0 10px 0; font-size: 16px; font-weight: 600;">{{ product.title }}</h4>
+                        
+                        <div style="margin-bottom: 15px;">
+                            {% if product.originalPrice and product.originalPrice != product.price %}
+                            <span style="color: #999; text-decoration: line-through; font-size: 14px;">${{ product.originalPrice }}</span>
+                            {% endif %}
+                            <span style="color: #e74c3c; font-weight: bold; font-size: 18px;">${{ product.price }}</span>
+                        </div>
+                        
+                        <a href="{{ frontend_url }}/product/{{ product.id }}/{{ product.title|slugify }}?utm_source=email&utm_medium=promotion&utm_campaign={{ campaign.id }}&utm_content={{ user.id }}" 
+                           style="display: inline-block; background-color: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+                            View Product
+                        </a>
+                    </div>
+                    {% if forloop.counter|divisibleby:3 and not forloop.last %}
+                    </div>
+                    <div style="display: table; width: 100%; border-collapse: separate; border-spacing: 15px;">
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Call to Action -->
+            <div style="text-align: center; margin: 40px 0 30px 0;">
+                <a href="{{ frontend_url }}/search?shop={{ shop.id }}&utm_source=email&utm_medium=promotion&utm_campaign={{ campaign.id }}&utm_content={{ user.id }}" 
+                   style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+                    Shop Now
+                </a>
+            </div>
+
+            <!-- Social Proof -->
+            {% if shop.total_orders %}
+            <div style="text-align: center; padding: 20px; background-color: #f8f9fa; border-radius: 8px; margin: 30px 0;">
+                <p style="color: #666; margin: 0; font-size: 14px;">
+                    <strong>{{ shop.total_orders }}+</strong> happy customers have shopped with {{ shop.name }}
+                </p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Footer -->
+        <div style="background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef;">
+            <p style="color: #666; margin: 0 0 15px 0; font-size: 14px;">
+                Thank you for being a valued customer!
+            </p>
+            
+            <div style="margin: 20px 0;">
+                <a href="{{ frontend_url }}" style="color: #667eea; text-decoration: none; margin: 0 15px; font-size: 14px;">Visit Website</a>
+                <a href="{{ frontend_url }}/account" style="color: #667eea; text-decoration: none; margin: 0 15px; font-size: 14px;">My Account</a>
+                <a href="{{ frontend_url }}/contact" style="color: #667eea; text-decoration: none; margin: 0 15px; font-size: 14px;">Contact Us</a>
+            </div>
+            
+            {% if unsubscribe_url %}
+            <p style="color: #999; font-size: 12px; margin: 20px 0 0 0;">
+                Don't want to receive these emails? 
+                <a href="{{ unsubscribe_url }}" style="color: #999; text-decoration: underline;">Unsubscribe</a>
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Tracking Pixel -->
+<img src="{{ frontend_url }}/api/promotions/track/open/{{ campaign.id }}/{{ user.id }}/" width="1" height="1" style="display: none;" alt="">
+{% endblock %}

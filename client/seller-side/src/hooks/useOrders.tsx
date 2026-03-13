@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 
 export interface OrderItemApi {
@@ -13,7 +13,6 @@ export interface OrderItemApi {
 }
 
 export interface Order {
-    api_id: number;
     id: string;
     customer_name: string;
     customer_email: string;
@@ -40,12 +39,13 @@ const mapStatus = (status: string): Order["status"] => {
     return "Pending";
 };
 
-export const useOrders = (shopId?: number) => {
+export const useOrders = (shopId?: string) => {
     return useQuery({
-        queryKey: ['admin_orders', shopId ?? 'all'],
+        queryKey: ['admin_orders', shopId],
         queryFn: async (): Promise<Order[]> => {
             try {
-                const response = await api.get('/orders/orders/');
+                const params = shopId ? { shop: shopId } : {};
+                const response = await api.get('/orders/orders/', { params });
                 const data = response.data?.results ?? response.data;
 
                 if (!Array.isArray(data)) {
@@ -53,7 +53,6 @@ export const useOrders = (shopId?: number) => {
                 }
 
                 return data.map((order: any) => ({
-                    api_id: Number(order.id),
                     id: String(order.order_id ?? order.id ?? ""),
                     customer_name: order.customer_name || "Guest",
                     customer_email: order.customer_email || "",
@@ -75,30 +74,6 @@ export const useOrders = (shopId?: number) => {
                 return [];
             }
         },
-    });
-};
-
-const toBackendStatus = (status: Order["status"]) => {
-    const normalized = (status || "").toLowerCase();
-    if (normalized === "processing") return "processing";
-    if (normalized === "shipped") return "shipped";
-    if (normalized === "delivered") return "delivered";
-    if (normalized === "cancelled") return "cancelled";
-    return "pending";
-};
-
-export const useUpdateOrderStatus = () => {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: async ({ orderApiId, status }: { orderApiId: number; status: Order["status"] }) => {
-            const response = await api.patch(`/orders/orders/${orderApiId}/`, {
-                status: toBackendStatus(status),
-            });
-            return response.data;
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["admin_orders"] });
-        },
+        enabled: !!shopId,
     });
 };

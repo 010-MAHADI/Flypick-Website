@@ -11,6 +11,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
+import { useProducts } from "../hooks/useProducts";
+import {
+  usePromotions,
+  usePromotionStats,
+  useCreatePromotion,
+  useUpdatePromotion,
+  useDeletePromotion,
+  useSendPromotion,
+  useDuplicatePromotion,
+  type PromotionCampaign,
+  type CreateCampaignData
+} from "@/hooks/usePromotions";
 import {
   Bell,
   Mail,
@@ -21,7 +33,6 @@ import {
   Trash2,
   Eye,
   Clock,
-  CheckCircle2,
   Users,
   Target,
   TrendingUp,
@@ -29,77 +40,6 @@ import {
   Edit,
   Copy,
 } from "lucide-react";
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  category: string;
-}
-
-interface Promotion {
-  id: number;
-  title: string;
-  message: string;
-  type: "email" | "notification" | "both";
-  status: "draft" | "scheduled" | "sent" | "active";
-  products: Product[];
-  audience: string;
-  sentCount?: number;
-  openRate?: number;
-  clickRate?: number;
-  createdAt: string;
-  scheduledAt?: string;
-  sentAt?: string;
-}
-
-const mockProducts: Product[] = [
-  { id: 1, name: "Wireless Headphones Pro", price: 129.99, image: "/placeholder.svg", category: "Electronics" },
-  { id: 2, name: "Organic Cotton T-Shirt", price: 34.99, image: "/placeholder.svg", category: "Clothing" },
-  { id: 3, name: "Smart Watch Ultra", price: 299.99, image: "/placeholder.svg", category: "Electronics" },
-  { id: 4, name: "Leather Crossbody Bag", price: 89.99, image: "/placeholder.svg", category: "Accessories" },
-  { id: 5, name: "Premium Coffee Beans 1kg", price: 24.99, image: "/placeholder.svg", category: "Food" },
-  { id: 6, name: "Yoga Mat Premium", price: 49.99, image: "/placeholder.svg", category: "Sports" },
-];
-
-const mockPromotions: Promotion[] = [
-  {
-    id: 1,
-    title: "Summer Sale - Electronics",
-    message: "Don't miss our biggest summer sale! Up to 40% off on all electronics. Limited time offer.",
-    type: "both",
-    status: "sent",
-    products: [mockProducts[0], mockProducts[2]],
-    audience: "All Customers",
-    sentCount: 1250,
-    openRate: 42.5,
-    clickRate: 18.3,
-    createdAt: "2025-03-01",
-    sentAt: "2025-03-02",
-  },
-  {
-    id: 2,
-    title: "New Arrivals Alert",
-    message: "Fresh styles just dropped! Check out our new collection of premium clothing and accessories.",
-    type: "email",
-    status: "scheduled",
-    products: [mockProducts[1], mockProducts[3]],
-    audience: "Returning Customers",
-    createdAt: "2025-03-05",
-    scheduledAt: "2025-03-12",
-  },
-  {
-    id: 3,
-    title: "Flash Deal - Coffee Lovers",
-    message: "24-hour flash deal! Get our Premium Coffee Beans at 30% off. Today only!",
-    type: "notification",
-    status: "draft",
-    products: [mockProducts[4]],
-    audience: "All Customers",
-    createdAt: "2025-03-08",
-  },
-];
 
 const typeConfig = {
   email: { label: "Email", icon: Mail, color: "bg-blue-500/10 text-blue-600 border-blue-200" },
@@ -110,15 +50,27 @@ const typeConfig = {
 const statusConfig = {
   draft: { label: "Draft", color: "bg-muted text-muted-foreground" },
   scheduled: { label: "Scheduled", color: "bg-blue-500/10 text-blue-600" },
+  sending: { label: "Sending", color: "bg-orange-500/10 text-orange-600" },
   sent: { label: "Sent", color: "bg-green-500/10 text-green-600" },
   active: { label: "Active", color: "bg-emerald-500/10 text-emerald-600" },
+  failed: { label: "Failed", color: "bg-red-500/10 text-red-600" },
 };
 
 export default function Promotions() {
-  const [promotions, setPromotions] = useState<Promotion[]>(mockPromotions);
+  // API hooks
+  const { data: promotions = [], isLoading } = usePromotions();
+  const { data: stats } = usePromotionStats();
+  const { data: products = [] } = useProducts();
+  const createPromotion = useCreatePromotion();
+  const updatePromotion = useUpdatePromotion();
+  const deletePromotion = useDeletePromotion();
+  const sendPromotion = useSendPromotion();
+  const duplicatePromotion = useDuplicatePromotion();
+
+  // UI state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
-  const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null);
+  const [selectedPromotion, setSelectedPromotion] = useState<PromotionCampaign | null>(null);
   const [activeTab, setActiveTab] = useState("all");
 
   // Form state
@@ -132,14 +84,17 @@ export default function Promotions() {
   const [formSubject, setFormSubject] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  const stats = {
-    total: promotions.length,
-    sent: promotions.filter((p) => p.status === "sent").length,
-    scheduled: promotions.filter((p) => p.status === "scheduled").length,
-    avgOpenRate:
-      promotions.filter((p) => p.openRate).reduce((acc, p) => acc + (p.openRate || 0), 0) /
-        (promotions.filter((p) => p.openRate).length || 1),
+  const defaultStats = {
+    total_campaigns: 0,
+    sent_campaigns: 0,
+    scheduled_campaigns: 0,
+    avg_open_rate: 0,
+    avg_click_rate: 0,
+    total_sent: 0,
+    total_revenue: 0
   };
+
+  const currentStats = stats || defaultStats;
 
   const filteredPromotions =
     activeTab === "all" ? promotions : promotions.filter((p) => p.status === activeTab);
@@ -156,15 +111,16 @@ export default function Promotions() {
     setEditingId(null);
   };
 
-  const openCreateDialog = (promo?: Promotion) => {
+  const openCreateDialog = (promo?: PromotionCampaign) => {
     if (promo) {
       setFormTitle(promo.title);
       setFormMessage(promo.message);
-      setFormType(promo.type);
-      setFormAudience(promo.audience === "All Customers" ? "all" : "returning");
-      setFormSelectedProducts(promo.products.map((p) => p.id));
-      setFormSchedule(!!promo.scheduledAt);
-      setFormScheduleDate(promo.scheduledAt || "");
+      setFormType(promo.channel);
+      setFormAudience(promo.audience);
+      setFormSelectedProducts(promo.products?.map((p) => p.id) || []);
+      setFormSchedule(!!promo.scheduled_at);
+      setFormScheduleDate(promo.scheduled_at || "");
+      setFormSubject(promo.email_subject || "");
       setEditingId(promo.id);
     } else {
       resetForm();
@@ -172,83 +128,108 @@ export default function Promotions() {
     setShowCreateDialog(true);
   };
 
-  const handleSave = (asDraft: boolean) => {
+  const handleSave = async (asDraft: boolean) => {
     if (!formTitle.trim() || !formMessage.trim() || formSelectedProducts.length === 0) {
-      toast({ title: "Missing fields", description: "Please fill in all required fields and select at least one product.", variant: "destructive" });
+      toast({ 
+        title: "Missing fields", 
+        description: "Please fill in all required fields and select at least one product.", 
+        variant: "destructive" 
+      });
       return;
     }
 
-    const selectedProds = mockProducts.filter((p) => formSelectedProducts.includes(p.id));
-    const audienceLabel = formAudience === "all" ? "All Customers" : "Returning Customers";
+    const campaignData: CreateCampaignData = {
+      title: formTitle,
+      message: formMessage,
+      email_subject: formSubject || undefined,
+      channel: formType,
+      audience: formAudience as any,
+      product_ids: formSelectedProducts,
+      scheduled_at: formSchedule ? formScheduleDate : undefined,
+    };
 
-    if (editingId) {
-      setPromotions((prev) =>
-        prev.map((p) =>
-          p.id === editingId
-            ? {
-                ...p,
-                title: formTitle,
-                message: formMessage,
-                type: formType,
-                audience: audienceLabel,
-                products: selectedProds,
-                status: asDraft ? "draft" : formSchedule ? "scheduled" : "sent",
-                scheduledAt: formSchedule ? formScheduleDate : undefined,
-                sentAt: !asDraft && !formSchedule ? new Date().toISOString().split("T")[0] : undefined,
-              }
-            : p
-        )
-      );
-      toast({ title: "Promotion updated", description: `"${formTitle}" has been updated.` });
-    } else {
-      const newPromo: Promotion = {
-        id: Date.now(),
-        title: formTitle,
-        message: formMessage,
-        type: formType,
-        status: asDraft ? "draft" : formSchedule ? "scheduled" : "sent",
-        products: selectedProds,
-        audience: audienceLabel,
-        createdAt: new Date().toISOString().split("T")[0],
-        scheduledAt: formSchedule ? formScheduleDate : undefined,
-        sentAt: !asDraft && !formSchedule ? new Date().toISOString().split("T")[0] : undefined,
-        sentCount: !asDraft && !formSchedule ? Math.floor(Math.random() * 2000) + 500 : undefined,
-      };
-      setPromotions((prev) => [newPromo, ...prev]);
+    try {
+      if (editingId) {
+        await updatePromotion.mutateAsync({ id: editingId, data: campaignData });
+        toast({ title: "Promotion updated", description: `"${formTitle}" has been updated.` });
+      } else {
+        const newPromo = await createPromotion.mutateAsync(campaignData);
+        
+        if (!asDraft && !formSchedule) {
+          // Send immediately - this will now be asynchronous
+          const sendResult = await sendPromotion.mutateAsync({ 
+            id: newPromo.id, 
+            data: { send_immediately: true } 
+          });
+          
+          toast({
+            title: "Promotion is being sent!",
+            description: `"${formTitle}" is being sent in the background. You'll see the status update shortly.`,
+          });
+        } else {
+          toast({
+            title: asDraft ? "Draft saved" : "Promotion scheduled",
+            description: asDraft
+              ? `"${formTitle}" saved as draft.`
+              : `"${formTitle}" scheduled for ${formScheduleDate}.`,
+          });
+        }
+      }
+
+      setShowCreateDialog(false);
+      resetForm();
+    } catch (error: any) {
       toast({
-        title: asDraft ? "Draft saved" : formSchedule ? "Promotion scheduled" : "Promotion sent!",
-        description: asDraft
-          ? `"${formTitle}" saved as draft.`
-          : formSchedule
-          ? `"${formTitle}" scheduled for ${formScheduleDate}.`
-          : `"${formTitle}" sent to ${audienceLabel}.`,
+        title: "Error",
+        description: error.response?.data?.message || "Failed to save promotion",
+        variant: "destructive"
       });
     }
-
-    setShowCreateDialog(false);
-    resetForm();
   };
 
-  const handleDelete = (id: number) => {
-    setPromotions((prev) => prev.filter((p) => p.id !== id));
-    toast({ title: "Promotion deleted", description: "The promotion has been removed." });
+  const handleDelete = async (id: number) => {
+    try {
+      await deletePromotion.mutateAsync(id);
+      toast({ title: "Promotion deleted", description: "The promotion has been removed." });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to delete promotion",
+        variant: "destructive"
+      });
+    }
   };
 
-  const handleDuplicate = (promo: Promotion) => {
-    const dup: Promotion = {
-      ...promo,
-      id: Date.now(),
-      title: `${promo.title} (Copy)`,
-      status: "draft",
-      sentCount: undefined,
-      openRate: undefined,
-      clickRate: undefined,
-      sentAt: undefined,
-      scheduledAt: undefined,
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    setPromotions((prev) => [dup, ...prev]);
-    toast({ title: "Promotion duplicated", description: `"${dup.title}" created as draft.` });
+  const handleDuplicate = async (promo: PromotionCampaign) => {
+    try {
+      await duplicatePromotion.mutateAsync(promo.id);
+      toast({ title: "Promotion duplicated", description: `"${promo.title} (Copy)" created as draft.` });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to duplicate promotion",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleSendNow = async (promo: PromotionCampaign) => {
+    try {
+      await sendPromotion.mutateAsync({ 
+        id: promo.id, 
+        data: { send_immediately: true } 
+      });
+      toast({ 
+        title: "Promotion is being sent!", 
+        description: `"${promo.title}" is being sent in the background. You'll see the status update shortly.` 
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to send promotion",
+        variant: "destructive"
+      });
+    }
   };
 
   const toggleProduct = (productId: number) => {
@@ -274,10 +255,10 @@ export default function Promotions() {
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Total Campaigns", value: stats.total, icon: Megaphone, color: "text-primary" },
-          { label: "Sent", value: stats.sent, icon: Send, color: "text-green-600" },
-          { label: "Scheduled", value: stats.scheduled, icon: Clock, color: "text-blue-600" },
-          { label: "Avg. Open Rate", value: `${stats.avgOpenRate.toFixed(1)}%`, icon: TrendingUp, color: "text-amber-600" },
+          { label: "Total Campaigns", value: currentStats.total_campaigns, icon: Megaphone, color: "text-primary" },
+          { label: "Sent", value: currentStats.sent_campaigns, icon: Send, color: "text-green-600" },
+          { label: "Scheduled", value: currentStats.scheduled_campaigns, icon: Clock, color: "text-blue-600" },
+          { label: "Avg. Open Rate", value: `${currentStats.avg_open_rate.toFixed(1)}%`, icon: TrendingUp, color: "text-amber-600" },
         ].map((stat) => (
           <Card key={stat.label} className="border-border/50">
             <CardContent className="p-4 flex items-center gap-3">
@@ -303,7 +284,14 @@ export default function Promotions() {
         </TabsList>
 
         <TabsContent value={activeTab} className="mt-4 space-y-3">
-          {filteredPromotions.length === 0 ? (
+          {isLoading ? (
+            <Card className="border-dashed border-border">
+              <CardContent className="py-12 text-center">
+                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent mb-3" />
+                <p className="text-muted-foreground font-medium">Loading promotions...</p>
+              </CardContent>
+            </Card>
+          ) : filteredPromotions.length === 0 ? (
             <Card className="border-dashed border-border">
               <CardContent className="py-12 text-center">
                 <Megaphone className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
@@ -313,7 +301,7 @@ export default function Promotions() {
             </Card>
           ) : (
             filteredPromotions.map((promo) => {
-              const tConfig = typeConfig[promo.type];
+              const tConfig = typeConfig[promo.channel];
               const sConfig = statusConfig[promo.status];
               return (
                 <Card key={promo.id} className="border-border/50 hover:shadow-sm transition-shadow">
@@ -331,9 +319,9 @@ export default function Promotions() {
                         </div>
                         <p className="text-sm text-muted-foreground line-clamp-1 mb-2">{promo.message}</p>
                         <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-                          <span className="flex items-center gap-1"><Package className="h-3 w-3" />{promo.products.length} product{promo.products.length > 1 ? "s" : ""}</span>
+                          <span className="flex items-center gap-1"><Package className="h-3 w-3" />{promo.products?.length || 0} product{(promo.products?.length || 0) > 1 ? "s" : ""}</span>
                           <span className="flex items-center gap-1"><Target className="h-3 w-3" />{promo.audience}</span>
-                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{promo.scheduledAt ? `Scheduled: ${promo.scheduledAt}` : promo.sentAt ? `Sent: ${promo.sentAt}` : `Created: ${promo.createdAt}`}</span>
+                          <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{promo.scheduled_at ? `Scheduled: ${new Date(promo.scheduled_at).toLocaleDateString()}` : promo.sent_at ? `Sent: ${new Date(promo.sent_at).toLocaleDateString()}` : `Created: ${new Date(promo.created_at).toLocaleDateString()}`}</span>
                         </div>
                       </div>
 
@@ -341,15 +329,15 @@ export default function Promotions() {
                       {promo.status === "sent" && (
                         <div className="flex items-center gap-6 text-center">
                           <div>
-                            <p className="text-lg font-bold text-foreground">{promo.sentCount?.toLocaleString()}</p>
+                            <p className="text-lg font-bold text-foreground">{promo.sent_count?.toLocaleString()}</p>
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Sent</p>
                           </div>
                           <div>
-                            <p className="text-lg font-bold text-foreground">{promo.openRate}%</p>
+                            <p className="text-lg font-bold text-foreground">{promo.open_rate}%</p>
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Opened</p>
                           </div>
                           <div>
-                            <p className="text-lg font-bold text-foreground">{promo.clickRate}%</p>
+                            <p className="text-lg font-bold text-foreground">{promo.click_rate}%</p>
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Clicked</p>
                           </div>
                         </div>
@@ -361,16 +349,29 @@ export default function Promotions() {
                           <Eye className="h-4 w-4" />
                         </Button>
                         {promo.status === "draft" && (
-                          <Button variant="ghost" size="icon" onClick={() => openCreateDialog(promo)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
+                          <>
+                            <Button variant="ghost" size="icon" onClick={() => openCreateDialog(promo)}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" onClick={() => handleSendNow(promo)} disabled={sendPromotion.isPending}>
+                              <Send className="h-4 w-4" />
+                            </Button>
+                          </>
                         )}
-                        <Button variant="ghost" size="icon" onClick={() => handleDuplicate(promo)}>
+                        {promo.status === "sending" && (
+                          <div className="flex items-center gap-2 text-orange-600">
+                            <div className="animate-spin h-4 w-4 border-2 border-orange-600 border-t-transparent rounded-full"></div>
+                            <span className="text-xs">Sending...</span>
+                          </div>
+                        )}
+                        <Button variant="ghost" size="icon" onClick={() => handleDuplicate(promo)} disabled={duplicatePromotion.isPending}>
                           <Copy className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDelete(promo.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {promo.status !== "sending" && (
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => handleDelete(promo.id)} disabled={deletePromotion.isPending}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -436,7 +437,7 @@ export default function Promotions() {
             <div className="space-y-2">
               <Label>Select Products *</Label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2">
-                {mockProducts.map((product) => (
+                {products.map((product) => (
                   <label
                     key={product.id}
                     className={`flex items-center gap-3 p-2.5 rounded-md cursor-pointer transition-colors ${
@@ -445,7 +446,7 @@ export default function Promotions() {
                   >
                     <Checkbox checked={formSelectedProducts.includes(product.id)} onCheckedChange={() => toggleProduct(product.id)} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{product.name}</p>
+                      <p className="text-sm font-medium text-foreground truncate">{product.title}</p>
                       <p className="text-xs text-muted-foreground">${product.price} · {product.category}</p>
                     </div>
                   </label>
@@ -484,10 +485,10 @@ export default function Promotions() {
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => handleSave(true)}>
+            <Button variant="outline" onClick={() => handleSave(true)} disabled={createPromotion.isPending || updatePromotion.isPending}>
               Save as Draft
             </Button>
-            <Button onClick={() => handleSave(false)} className="gap-2">
+            <Button onClick={() => handleSave(false)} className="gap-2" disabled={createPromotion.isPending || updatePromotion.isPending}>
               <Send className="h-4 w-4" />
               {formSchedule ? "Schedule" : "Send Now"}
             </Button>
@@ -507,14 +508,14 @@ export default function Promotions() {
                 <Badge variant="outline" className={statusConfig[selectedPromotion.status].color}>
                   {statusConfig[selectedPromotion.status].label}
                 </Badge>
-                <Badge variant="outline" className={typeConfig[selectedPromotion.type].color}>
+                <Badge variant="outline" className={typeConfig[selectedPromotion.channel].color}>
                   <Mail className="h-3 w-3 mr-1" />
-                  {typeConfig[selectedPromotion.type].label}
+                  {typeConfig[selectedPromotion.channel].label}
                 </Badge>
               </div>
 
               {/* Email Preview */}
-              {(selectedPromotion.type === "email" || selectedPromotion.type === "both") && (
+              {(selectedPromotion.channel === "email" || selectedPromotion.channel === "both") && (
                 <Card className="border-border/50">
                   <CardHeader className="pb-2">
                     <CardDescription className="text-xs">Email Preview</CardDescription>
@@ -524,24 +525,24 @@ export default function Promotions() {
                     <p className="text-sm text-muted-foreground">{selectedPromotion.message}</p>
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-foreground">Featured Products:</p>
-                      {selectedPromotion.products.map((product) => (
+                      {selectedPromotion.products?.map((product) => (
                         <div key={product.id} className="flex items-center gap-3 p-2 rounded-md bg-muted/50">
                           <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
                             <Package className="h-4 w-4 text-muted-foreground" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-foreground">{product.name}</p>
+                            <p className="text-sm font-medium text-foreground">{product.title}</p>
                             <p className="text-xs text-muted-foreground">${product.price}</p>
                           </div>
                         </div>
-                      ))}
+                      )) || <p className="text-xs text-muted-foreground">No products selected</p>}
                     </div>
                   </CardContent>
                 </Card>
               )}
 
               {/* Notification Preview */}
-              {(selectedPromotion.type === "notification" || selectedPromotion.type === "both") && (
+              {(selectedPromotion.channel === "notification" || selectedPromotion.channel === "both") && (
                 <Card className="border-border/50">
                   <CardHeader className="pb-2">
                     <CardDescription className="text-xs">Push Notification Preview</CardDescription>
@@ -564,7 +565,7 @@ export default function Promotions() {
 
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1"><Users className="h-3 w-3" />{selectedPromotion.audience}</span>
-                <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />Created: {selectedPromotion.createdAt}</span>
+                <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />Created: {new Date(selectedPromotion.created_at).toLocaleDateString()}</span>
               </div>
             </div>
           )}

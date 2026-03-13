@@ -19,6 +19,7 @@ import Account from "./pages/Account";
 import Search from "./pages/Search";
 import Wishlist from "./pages/Wishlist";
 import Auth from "./pages/Auth";
+import Notifications from "./pages/Notifications";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
 import ReturnPolicy from "./pages/ReturnPolicy";
@@ -53,6 +54,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/product/:id" element={<ProductDetail />} />
+            <Route path="/product/:id/:slug" element={<ProductDetail />} />
             <Route path="/:category/:slug" element={<ProductDetail />} />
             <Route path="/cart" element={<Cart />} />
             <Route path="/checkout" element={<Checkout />} />
@@ -61,6 +63,7 @@ const App = () => (
             <Route path="/order/:orderId" element={<OrderDetail />} />
             <Route path="/track-order/:orderId" element={<TrackOrder />} />
             <Route path="/account" element={<Account />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="/search" element={<Search />} />
             <Route path="/wishlist" element={<Wishlist />} />
             <Route path="/super-deals" element={<SuperDeals />} />

@@ -75,6 +75,16 @@ class Order(models.Model):
     class Meta:
         ordering = ['-created_at']
     
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Store original status for change detection
+        self._original_status = self.status
+    
+    def save(self, *args, **kwargs):
+        # Update original status after save
+        super().save(*args, **kwargs)
+        self._original_status = self.status
+    
     def __str__(self):
         return f"Order {self.order_id} by {self.customer.username}"
 

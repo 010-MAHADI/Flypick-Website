@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
 // API configuration
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://flypick.shop/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://52.221.195.134/api';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
@@ -15,7 +15,7 @@ const api: AxiosInstance = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -34,10 +34,21 @@ api.interceptors.response.use(
   (error) => {
     // Handle common errors
     if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/auth';
+      // Only redirect to login for protected endpoints, not public ones
+      const url = error.config?.url || '';
+      const isProtectedEndpoint = (url.includes('/auth/') || 
+                                 url.includes('/orders/') || 
+                                 url.includes('/cart/') || 
+                                 url.includes('/profile/') ||
+                                 url.includes('/wishlist/')) &&
+                                 !url.includes('/orders/orders/product_coupons/'); // Exception for public coupon endpoint
+      
+      if (isProtectedEndpoint) {
+        // Unauthorized on protected endpoint - clear tokens and redirect to login
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        window.location.href = '/auth';
+      }
     }
     
     if (error.response?.status === 403) {

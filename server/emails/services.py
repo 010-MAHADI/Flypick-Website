@@ -187,7 +187,7 @@ class NotificationService:
         context = {
             'user_name': user.first_name or user.username,
             'user_email': user.email,
-            'login_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/login",
+            'login_url': f"{getattr(settings, 'FRONTEND_URL', 'http://52.221.195.134')}/login",
             'site_name': getattr(settings, 'SITE_NAME', 'Flypick / Boibazar'),
             'current_year': timezone.now().year,
         }
@@ -198,6 +198,36 @@ class NotificationService:
             context=context,
             recipient_user=user
         )
+    
+    @staticmethod
+    def send_promotion_email(to_email: str, subject: str, context: dict) -> bool:
+        """Static method to send promotion email"""
+        notification_service = NotificationService()
+        return notification_service._send_promotion_email_internal(to_email, subject, context)
+    
+    def _send_promotion_email_internal(self, to_email: str, subject: str, context: dict) -> bool:
+        """Internal method to send promotion email"""
+        try:
+            from django.template.loader import render_to_string
+            
+            # Add frontend URL to context
+            context['frontend_url'] = getattr(settings, 'FRONTEND_URL', 'http://localhost:8080')
+            
+            # Render the promotion email template
+            html_content = render_to_string('email_templates/promotion.html', context)
+            
+            # Send email
+            return self.email_service.send_email(
+                recipient_email=to_email,
+                subject=subject,
+                html_content=html_content,
+                template_type='promotion',
+                recipient_user=context.get('user')
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send promotion email: {str(e)}")
+            return False
     
     def send_order_confirmation(self, order) -> bool:
         """Send order confirmation email"""
@@ -232,7 +262,7 @@ class NotificationService:
             },
             'payment_method': order.payment_method,
             'estimated_delivery': '3-5 business days',
-            'tracking_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/orders/{order.order_id}",
+            'tracking_url': f"{getattr(settings, 'FRONTEND_URL', 'http://52.221.195.134')}/orders/{order.order_id}",
             'site_name': getattr(settings, 'SITE_NAME', 'Flypick / Boibazar'),
             'current_year': timezone.now().year,
         }
@@ -266,7 +296,7 @@ class NotificationService:
             'new_status': order.status.title(),
             'status_message': status_messages.get(order.status, 'Your order status has been updated.'),
             'order_date': order.created_at.strftime('%B %d, %Y'),
-            'tracking_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')}/orders/{order.order_id}",
+            'tracking_url': f"{getattr(settings, 'FRONTEND_URL', 'http://52.221.195.134')}/orders/{order.order_id}",
             'site_name': getattr(settings, 'SITE_NAME', 'Flypick / Boibazar'),
             'current_year': timezone.now().year,
         }
@@ -317,7 +347,7 @@ class NotificationService:
                     'country': order.shipping_country,
                 },
                 'payment_method': order.payment_method,
-                'dashboard_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://localhost:5174')}/orders",
+                'dashboard_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://52.221.195.134:8080')}/orders",
                 'site_name': getattr(settings, 'SITE_NAME', 'Flypick / Boibazar'),
                 'current_year': timezone.now().year,
             }
@@ -355,8 +385,8 @@ class NotificationService:
             'product_sku': product.sku,
             'current_stock': product.stock,
             'threshold': threshold,
-            'product_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://localhost:5174')}/products/{product.id}",
-            'dashboard_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://localhost:5174')}/products",
+            'product_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://52.221.195.134:8080')}/products/{product.id}",
+            'dashboard_url': f"{getattr(settings, 'SELLER_FRONTEND_URL', 'http://52.221.195.134:8080')}/products",
             'site_name': getattr(settings, 'SITE_NAME', 'Flypick / Boibazar'),
             'current_year': timezone.now().year,
         }

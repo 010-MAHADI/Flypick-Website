@@ -1,17 +1,31 @@
 import { useSearchParams } from "react-router-dom";
 import { useState, useMemo } from "react";
 import { SlidersHorizontal, X, Star, Truck, Tag } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import ProductCard from "@/components/ProductCard";
 import { useProducts } from "@/hooks/useProducts";
+import api from "@/lib/api";
 
 const Search = () => {
   const { data: products = [], isLoading, isError } = useProducts();
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") || "";
+  const categoryId = searchParams.get("category");
   const [sortBy, setSortBy] = useState("best-match");
   const [showFilters, setShowFilters] = useState(false);
+
+  // Fetch category data if categoryId is present
+  const { data: category } = useQuery({
+    queryKey: ['category', categoryId],
+    queryFn: async () => {
+      if (!categoryId) return null;
+      const response = await api.get(`/products/categories/${categoryId}/`);
+      return response.data;
+    },
+    enabled: !!categoryId,
+  });
 
   // Filter state
   const [priceMin, setPriceMin] = useState("");
@@ -39,12 +53,18 @@ const Search = () => {
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
+      // Category filtering - if categoryId is specified, filter by category
+      if (categoryId && p.category_id !== parseInt(categoryId)) return false;
+      
+      // Text search filtering
       if (
         query &&
         !p.title.toLowerCase().includes(query.toLowerCase()) &&
         !p.category.toLowerCase().includes(query.toLowerCase()) &&
         !p.store.toLowerCase().includes(query.toLowerCase())
       ) return false;
+      
+      // Other filters
       if (priceMin && p.price < Number(priceMin)) return false;
       if (priceMax && p.price > Number(priceMax)) return false;
       if (freeShipping && !p.freeShipping) return false;
@@ -53,7 +73,7 @@ const Search = () => {
       if (onlyDeals && !p.welcomeDeal) return false;
       return true;
     });
-  }, [query, priceMin, priceMax, freeShipping, minRating, selectedBadges, onlyDeals]);
+  }, [products, categoryId, query, priceMin, priceMax, freeShipping, minRating, selectedBadges, onlyDeals]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -80,7 +100,9 @@ const Search = () => {
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold">{query ? `Results for "${query}"` : "All Products"}</h1>
+            <h1 className="text-lg sm:text-xl font-bold">
+              {category ? `${category.name}` : query ? `Results for "${query}"` : "All Products"}
+            </h1>
             <p className="text-xs sm:text-sm text-muted-foreground">{sorted.length} items found</p>
           </div>
           <div className="flex items-center gap-2">

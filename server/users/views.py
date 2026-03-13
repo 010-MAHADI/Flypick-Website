@@ -10,6 +10,7 @@ from .models import SellerProfile
 from .roles import is_admin_user
 from .serializers import (
     CustomTokenObtainPairSerializer,
+    CustomerRegisterSerializer,
     RegisterSerializer,
     SellerRequestReviewSerializer,
     SellerRequestSerializer,
@@ -35,18 +36,39 @@ class CustomerRegisterView(generics.CreateAPIView):
         return CustomerRegisterSerializer
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        
-        # Return user data without sensitive information
-        return Response({
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'role': user.role,
-            'message': 'Customer account created successfully'
-        }, status=status.HTTP_201_CREATED)
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            
+            # Return user data without sensitive information
+            return Response({
+                'id': user.id,
+                'username': user.username,
+                'email': user.email,
+                'role': user.role,
+                'message': 'Customer account created successfully'
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            # Handle any remaining database integrity errors
+            error_str = str(e)
+            if 'UNIQUE constraint failed' in error_str:
+                if 'username' in error_str:
+                    return Response({
+                        'error': 'Username already exists. Please choose a different username.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                elif 'email' in error_str:
+                    return Response({
+                        'error': 'Email already exists. Please use a different email address.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                elif 'customerprofile.user_id' in error_str:
+                    return Response({
+                        'error': 'Profile creation conflict. Please try again.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Re-raise other exceptions
+            raise e
 
 
 class RegisterView(generics.CreateAPIView):

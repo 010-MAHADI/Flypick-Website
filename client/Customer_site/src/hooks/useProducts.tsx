@@ -39,7 +39,7 @@ export interface Product {
     };
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/';
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://52.221.195.134/api/';
 const backendOrigin = apiBaseUrl.replace(/\/api\/?$/, '');
 
 const normalizeImageUrl = (image: string | null | undefined): string => {

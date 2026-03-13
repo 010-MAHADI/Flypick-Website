@@ -35,7 +35,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-%4^c-r!d$pf*q^8^e2u4xa0m68
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '52.221.195.134').split(',')
 
 
 # Application definition
@@ -57,6 +57,8 @@ INSTALLED_APPS = [
     "cart",
     "reviews",
     "emails",
+    "notifications",
+    "promotions",
 ]
 
 MIDDLEWARE = [
@@ -187,15 +189,15 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOWED_ORIGINS = os.getenv(
         'CORS_ALLOWED_ORIGINS',
-        'http://localhost:5173,http://localhost:5174,http://localhost:8081,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:8081,http://127.0.0.1:3000'
+        'http://52.221.195.134,http://52.221.195.134:8080'
     ).split(',')
 else:
-    # Production: Strict whitelist only
+    # Production: Use environment variable only
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOWED_ORIGINS = os.getenv(
         'CORS_ALLOWED_ORIGINS',
-        'https://flypick.shop,https://seller.flypick.shop,http://localhost:5173,http://localhost:5174'
-    ).split(',')
+        'http://52.221.195.134,http://52.221.195.134:8080'
+    ).split(',') if os.getenv('CORS_ALLOWED_ORIGINS') else ['http://52.221.195.134', 'http://52.221.195.134:8080']
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -283,9 +285,9 @@ SMTP_PASS = os.getenv('SMTP_PASS', '')
 EMAIL_SENDER_NAME = os.getenv('EMAIL_SENDER_NAME', 'Flypick')
 
 # Site Configuration
-SITE_NAME = os.getenv('SITE_NAME', 'Flypick / Boibazar')
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
-SELLER_FRONTEND_URL = os.getenv('SELLER_FRONTEND_URL', 'http://localhost:5174')
+SITE_NAME = os.getenv('SITE_NAME', 'Flypick')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://52.221.195.134')
+SELLER_FRONTEND_URL = os.getenv('SELLER_FRONTEND_URL', 'http://52.221.195.134:8080')
 
 # Logging Configuration
 LOGGING = {

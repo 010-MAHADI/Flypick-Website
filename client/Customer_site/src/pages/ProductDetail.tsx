@@ -20,8 +20,9 @@ const ProductDetail = () => {
   const navigate = useNavigate();
   const { isLoggedIn } = useAuth();
   
-  // Extract product ID from either /product/:id or /:category/:slug format
-  const productId = id || (slug ? extractProductId(slug)?.toString() : null);
+  // For /product/:id/:slug format, use the id directly
+  // For /:category/:slug format, extract ID from the slug
+  const productId = id || (slug ? extractProductId(window.location.pathname)?.toString() : null);
   
   const { data: product, isLoading, error } = useProduct(productId ?? "");
   const { data: allProducts } = useProducts();

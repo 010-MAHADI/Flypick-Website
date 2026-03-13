@@ -404,16 +404,26 @@ sudo nano /etc/systemd/system/flypick.service
 **Add this configuration:**
 ```ini
 [Unit]
-Description=Flypick Django Application
+Description=Flypick Django Gunicorn Service
 After=network.target
 
 [Service]
-User=flypick
-Group=flypick
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/home/flypick/SIPI-Website/server
+
 Environment="PATH=/home/flypick/SIPI-Website/server/venv/bin"
-ExecStart=/home/flypick/SIPI-Website/server/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:8000 backend.wsgi:application
+
+ExecStart=/home/flypick/SIPI-Website/server/venv/bin/gunicorn \
+          --workers 3 \
+          --bind 127.0.0.1:8000 \
+          --access-logfile - \
+          --error-logfile - \
+          backend.wsgi:application
+
 Restart=always
+RestartSec=5
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target
