@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 
 export interface OrderItemApi {
@@ -75,5 +75,25 @@ export const useOrders = (shopId?: string) => {
             }
         },
         enabled: !!shopId,
+    });
+};
+
+export const useUpdateOrderStatus = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: async ({ orderApiId, status }: { orderApiId: string; status: string }) => {
+            const response = await api.patch(`/orders/orders/${orderApiId}/`, {
+                status: status
+            });
+            return response.data;
+        },
+        onSuccess: () => {
+            // Invalidate and refetch orders
+            queryClient.invalidateQueries({ queryKey: ['admin_orders'] });
+        },
+        onError: (error) => {
+            console.error('Failed to update order status:', error);
+        }
     });
 };

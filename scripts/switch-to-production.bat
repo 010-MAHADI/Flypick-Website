@@ -22,14 +22,21 @@ echo - Customer Site: http://52.221.195.134 (port 80)
 echo - Seller Dashboard: http://52.221.195.134:8080 (port 8080)
 echo - API Server: http://52.221.195.134/api (Django backend)
 echo.
+echo Configuration Details:
+echo - DEBUG=False (Production mode)
+echo - Database: PostgreSQL (USE_SQLITE=False)
+echo - Security: HTTP (SSL disabled for IP-based deployment)
+echo - CORS: Configured for production URLs
+echo.
 echo Next steps:
-echo 1. Build the frontend applications:
+echo 1. Update database credentials in server\.env if needed
+echo 2. Build the frontend applications:
 echo    cd client/Customer_site && npm run build
 echo    cd client/seller-side && npm run build
 echo.
-echo 2. Start the Django server:
+echo 3. Start the Django server:
 echo    cd server && python manage.py runserver 0.0.0.0:8000
 echo.
-echo 3. Configure and start Nginx with the provided nginx.conf
+echo 4. Configure and start Nginx with the provided nginx.conf
 echo.
 pause

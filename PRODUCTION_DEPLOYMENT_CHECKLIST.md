@@ -2,10 +2,25 @@
 
 ## ✅ Environment Configuration Complete
 
-All localhost URLs have been updated to production URLs:
+All environment files have been updated for production deployment:
 - **Customer Site**: `http://52.221.195.134` (port 80)
 - **Seller Dashboard**: `http://52.221.195.134:8080` (port 8080)
 - **API Server**: `http://52.221.195.134/api` (Django backend)
+
+## 🔧 Production Configuration
+
+### Security Settings:
+- **DEBUG**: False (Production mode)
+- **SSL**: Disabled (suitable for IP-based deployment)
+- **Database**: PostgreSQL (USE_SQLITE=False)
+- **CORS**: Configured for production URLs only
+
+### Database Configuration:
+- **Engine**: PostgreSQL
+- **Name**: flypick_production (or flypick_db)
+- **Host**: localhost
+- **Port**: 5432
+- **Note**: Update credentials in .env files before deployment
 
 ## 📁 Files Updated
 
