@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import {
   DollarSign,
   ShoppingCart,
@@ -21,105 +21,8 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useShop } from "@/context/ShopContext";
-
-type Period = "today" | "this_week" | "this_month" | "this_year";
-
-const revenueByPeriod: Record<Period, { value: string; change: string; up: boolean; chartData: { label: string; revenue: number }[]; badgeText: string }> = {
-  today: {
-    value: "$1,842.30",
-    change: "+5.2%",
-    up: true,
-    badgeText: "Today",
-    chartData: [
-      { label: "6AM", revenue: 120 },
-      { label: "8AM", revenue: 340 },
-      { label: "10AM", revenue: 580 },
-      { label: "12PM", revenue: 890 },
-      { label: "2PM", revenue: 1120 },
-      { label: "4PM", revenue: 1480 },
-      { label: "6PM", revenue: 1680 },
-      { label: "8PM", revenue: 1842 },
-    ],
-  },
-  this_week: {
-    value: "$12,485.50",
-    change: "+9.8%",
-    up: true,
-    badgeText: "This week",
-    chartData: [
-      { label: "Mon", revenue: 1800 },
-      { label: "Tue", revenue: 2200 },
-      { label: "Wed", revenue: 1950 },
-      { label: "Thu", revenue: 2600 },
-      { label: "Fri", revenue: 2100 },
-      { label: "Sat", revenue: 1050 },
-      { label: "Sun", revenue: 785 },
-    ],
-  },
-  this_month: {
-    value: "$48,295.70",
-    change: "+12.5%",
-    up: true,
-    badgeText: "This month",
-    chartData: [
-      { label: "Week 1", revenue: 10200 },
-      { label: "Week 2", revenue: 12800 },
-      { label: "Week 3", revenue: 14100 },
-      { label: "Week 4", revenue: 11195 },
-    ],
-  },
-  this_year: {
-    value: "$389,800.00",
-    change: "+18.3%",
-    up: true,
-    badgeText: "This year",
-    chartData: [
-      { label: "Jan", revenue: 18500 },
-      { label: "Feb", revenue: 22300 },
-      { label: "Mar", revenue: 19800 },
-      { label: "Apr", revenue: 27400 },
-      { label: "May", revenue: 31200 },
-      { label: "Jun", revenue: 28900 },
-      { label: "Jul", revenue: 35100 },
-      { label: "Aug", revenue: 33600 },
-      { label: "Sep", revenue: 38200 },
-      { label: "Oct", revenue: 41500 },
-      { label: "Nov", revenue: 44800 },
-      { label: "Dec", revenue: 48300 },
-    ],
-  },
-};
-
-const ordersByPeriod: Record<Period, { value: string; change: string; up: boolean }> = {
-  today: { value: "47", change: "+3.1%", up: true },
-  this_week: { value: "312", change: "+6.4%", up: true },
-  this_month: { value: "1,284", change: "+8.2%", up: true },
-  this_year: { value: "14,520", change: "+15.7%", up: true },
-};
-
-const customersByPeriod: Record<Period, { value: string; change: string; up: boolean }> = {
-  today: { value: "23", change: "+2.0%", up: true },
-  this_week: { value: "187", change: "+4.5%", up: true },
-  this_month: { value: "9,421", change: "+3.1%", up: true },
-  this_year: { value: "42,680", change: "+22.1%", up: true },
-};
-
-const categoryData = [
-  { name: "Electronics", value: 35 },
-  { name: "Clothing", value: 25 },
-  { name: "Home", value: 20 },
-  { name: "Sports", value: 12 },
-  { name: "Other", value: 8 },
-];
 
 const COLORS = [
   "hsl(4, 80%, 52%)",
@@ -127,22 +30,6 @@ const COLORS = [
   "hsl(36, 100%, 50%)",
   "hsl(280, 65%, 55%)",
   "hsl(200, 70%, 50%)",
-];
-
-const topProducts = [
-  { name: "USB-C PD Charger 120W", sold: 1243, revenue: "$24,860" },
-  { name: "Wireless Bluetooth Headphones", sold: 892, revenue: "$35,680" },
-  { name: "Smart Watch Band", sold: 756, revenue: "$11,340" },
-  { name: "LED Desk Lamp", sold: 634, revenue: "$12,680" },
-  { name: "Phone Case (Universal)", sold: 589, revenue: "$5,890" },
-];
-
-const recentOrders = [
-  { id: "#ORD-7291", customer: "Sarah Johnson", amount: "$129.99", status: "Delivered", date: "Mar 7, 2026" },
-  { id: "#ORD-7290", customer: "Mike Chen", amount: "$89.50", status: "Processing", date: "Mar 7, 2026" },
-  { id: "#ORD-7289", customer: "Emily Davis", amount: "$245.00", status: "Shipped", date: "Mar 6, 2026" },
-  { id: "#ORD-7288", customer: "Alex Wilson", amount: "$67.80", status: "Pending", date: "Mar 6, 2026" },
-  { id: "#ORD-7287", customer: "Lisa Park", amount: "$312.40", status: "Delivered", date: "Mar 5, 2026" },
 ];
 
 const statusClass: Record<string, string> = {
@@ -153,11 +40,42 @@ const statusClass: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const [period, setPeriod] = useState<Period>("this_month");
   const { currentShop } = useShop();
   const { data: dashboardData, isLoading } = useDashboard(currentShop?.id);
 
-  const revData = revenueByPeriod[period];
+  const revData = useMemo(() => {
+    // Use real revenue data if available, otherwise show empty state
+    if (dashboardData?.revenueData?.length) {
+      return {
+        value: dashboardData.stats.totalRevenue,
+        change: "+0%", // We don't have historical comparison data yet
+        up: true,
+        chartData: dashboardData.revenueData,
+        badgeText: "Last 7 days"
+      };
+    }
+    return {
+      value: "$0.00",
+      change: "+0%",
+      up: true,
+      chartData: [
+        { label: "No data", revenue: 0 }
+      ],
+      badgeText: "No data"
+    };
+  }, [dashboardData]);
+
+  const categoryData = useMemo(() => {
+    return dashboardData?.categoryData?.length ? dashboardData.categoryData : [
+      { name: "No data", value: 100 }
+    ];
+  }, [dashboardData]);
+
+  const topProducts = useMemo(() => {
+    return dashboardData?.topProducts?.length ? dashboardData.topProducts : [
+      { name: "No products found", sold: 0, revenue: "$0.00" }
+    ];
+  }, [dashboardData]);
 
   const stats = useMemo(() => {
     if (!dashboardData) {
@@ -170,40 +88,29 @@ export default function Dashboard() {
     }
 
     return [
-      { label: "Total Revenue", value: dashboardData.stats.totalRevenue, change: revData.change, up: revData.up, icon: DollarSign, gradient: "from-primary/10 to-primary/5", iconBg: "bg-primary/10 text-primary" },
-      { label: "Total Orders", value: dashboardData.stats.totalOrders.toLocaleString(), change: ordersByPeriod[period].change, up: ordersByPeriod[period].up, icon: ShoppingCart, gradient: "from-success/10 to-success/5", iconBg: "bg-success/10 text-success" },
-      { label: "Total Customers", value: dashboardData.stats.totalCustomers?.toLocaleString() || "N/A", change: customersByPeriod[period].change, up: customersByPeriod[period].up, icon: Users, gradient: "from-info/10 to-info/5", iconBg: "bg-info/10 text-info" },
-      { label: "Total Products", value: dashboardData.stats.activeProducts.toLocaleString(), change: "-2.4%", up: false, icon: Package, gradient: "from-warning/10 to-warning/5", iconBg: "bg-warning/10 text-warning" },
+      { label: "Total Revenue", value: dashboardData.stats.totalRevenue, change: "+0%", up: true, icon: DollarSign, gradient: "from-primary/10 to-primary/5", iconBg: "bg-primary/10 text-primary" },
+      { label: "Total Orders", value: dashboardData.stats.totalOrders.toLocaleString(), change: "+0%", up: true, icon: ShoppingCart, gradient: "from-success/10 to-success/5", iconBg: "bg-success/10 text-success" },
+      { label: "Total Customers", value: dashboardData.stats.totalCustomers?.toLocaleString() || "N/A", change: "+0%", up: true, icon: Users, gradient: "from-info/10 to-info/5", iconBg: "bg-info/10 text-info" },
+      { label: "Total Products", value: dashboardData.stats.activeProducts.toLocaleString(), change: "+0%", up: true, icon: Package, gradient: "from-warning/10 to-warning/5", iconBg: "bg-warning/10 text-warning" },
     ];
-  }, [dashboardData, period, revData]);
+  }, [dashboardData]);
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading dashboard...</div>;
 
-  const displayRecentOrders = dashboardData?.recentOrders?.length ? dashboardData.recentOrders : recentOrders;
+  const displayRecentOrders = dashboardData?.recentOrders?.length ? dashboardData.recentOrders : [
+    { id: "No orders", customer: "No data available", amount: "$0.00", status: "N/A", date: "-" }
+  ];
 
   return (
     <div className="space-y-8 animate-fade-in">
       <div className="page-header flex items-end justify-between">
         <div>
           <h1>Dashboard</h1>
-          <p>Welcome back! Here's what's happening today.</p>
+          <p>Welcome back! Here's what's happening with your shop.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
-            <SelectTrigger className="w-[150px] h-9 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="today">Today</SelectItem>
-              <SelectItem value="this_week">This Week</SelectItem>
-              <SelectItem value="this_month">This Month</SelectItem>
-              <SelectItem value="this_year">This Year</SelectItem>
-            </SelectContent>
-          </Select>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Activity className="h-3.5 w-3.5" />
-            <span>Live overview</span>
-          </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Activity className="h-3.5 w-3.5" />
+          <span>Live overview</span>
         </div>
       </div>
 
@@ -269,7 +176,7 @@ export default function Dashboard() {
             {categoryData.map((cat, idx) => (
               <div key={cat.name} className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2.5">
-                  <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[idx] }} />
+                  <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
                   <span className="text-muted-foreground">{cat.name}</span>
                 </div>
                 <span className="font-semibold">{cat.value}%</span>
@@ -299,8 +206,8 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {displayRecentOrders.map((order) => (
-                  <tr key={order.id}>
+                {displayRecentOrders.map((order, index) => (
+                  <tr key={order.id || index}>
                     <td className="font-medium font-mono text-xs pl-5">{order.id.toString().startsWith('#') ? order.id : `#ORD-${order.id}`}</td>
                     <td>{order.customer}</td>
                     <td className="font-semibold">{typeof order.amount === 'number' ? `$${order.amount.toFixed(2)}` : order.amount}</td>
@@ -329,8 +236,8 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {topProducts.map((p) => (
-                  <tr key={p.name}>
+                {topProducts.map((p, index) => (
+                  <tr key={p.name || index}>
                     <td className="font-medium max-w-[200px] truncate pl-5">{p.name}</td>
                     <td className="text-muted-foreground">{p.sold}</td>
                     <td className="font-semibold pr-5">{p.revenue}</td>

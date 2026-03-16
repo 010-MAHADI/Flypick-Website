@@ -17,6 +17,19 @@ export interface DashboardStats {
         status: string;
         date: string;
     }[];
+    revenueData?: {
+        label: string;
+        revenue: number;
+    }[];
+    categoryData?: {
+        name: string;
+        value: number;
+    }[];
+    topProducts?: {
+        name: string;
+        sold: number;
+        revenue: string;
+    }[];
 }
 
 export const useDashboard = (shopId?: string) => {
@@ -63,6 +76,9 @@ export const useDashboard = (shopId?: string) => {
                 return {
                     stats,
                     recentOrders,
+                    revenueData: payload?.revenueData || [],
+                    categoryData: payload?.categoryData || [],
+                    topProducts: payload?.topProducts || [],
                 };
             } catch (err: any) {
                 console.error("Failed to fetch dashboard stats", err);
@@ -76,7 +92,10 @@ export const useDashboard = (shopId?: string) => {
                         totalOrders: 0,
                         activeProducts: 0
                     },
-                    recentOrders: []
+                    recentOrders: [],
+                    revenueData: [],
+                    categoryData: [],
+                    topProducts: [],
                 };
             }
         },

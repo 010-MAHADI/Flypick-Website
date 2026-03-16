@@ -1,6 +1,7 @@
 # Django and Core Dependencies
 Django>=4.2.0,<5.0
 djangorestframework>=3.14.0
+drf-nested-routers>=0.93.4
 django-cors-headers>=4.0.0
 djangorestframework-simplejwt>=5.2.0
 
