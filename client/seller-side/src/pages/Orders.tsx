@@ -703,38 +703,6 @@ export default function Orders() {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {/* Debug Test Button */}
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="rounded-lg bg-yellow-50 border-yellow-200 text-yellow-800 hover:bg-yellow-100" 
-              onClick={async () => {
-                console.log('=== DEBUG: Testing Order Status Update ===');
-                console.log('Selected Order:', selectedOrder);
-                console.log('API ID:', selectedOrder.apiId);
-                console.log('Order ID:', selectedOrder.id);
-                
-                if (!selectedOrder.apiId) {
-                  toast.error('No API ID found for this order');
-                  return;
-                }
-                
-                try {
-                  const result = await updateOrderStatus.mutateAsync({
-                    orderApiId: selectedOrder.apiId,
-                    status: 'processing'
-                  });
-                  console.log('Test update successful:', result);
-                  toast.success('Test update successful!');
-                } catch (error: any) {
-                  console.error('Test update failed:', error);
-                  toast.error(`Test failed: ${error.response?.data?.detail || error.message}`);
-                }
-              }}
-            >
-              🧪 Test Update
-            </Button>
-            
             {selectedOrder.payment === "Unpaid" && (
               <Button variant="outline" size="sm" className="rounded-lg" onClick={() => openPaymentDialog(selectedOrder.id)}>
                 <Banknote className="h-4 w-4 mr-1.5" /> Mark Paid
