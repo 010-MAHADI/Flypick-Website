@@ -119,6 +119,7 @@ export default function ProductForm() {
         setStatus(product.status || "Draft");
         setIsFeatured(product.is_featured || false);
         setMetaTitle(product.meta_title || "");
+        setMetaTitleError(""); // Clear any previous error when loading product
         setMetaDescription(product.meta_description || "");
         setReturnPolicy(product.return_policy || "");
         setWarranty(product.warranty || "");
@@ -193,8 +194,27 @@ export default function ProductForm() {
   const [specifications, setSpecifications] = useState<Specification[]>([{ key: "", value: "" }]);
   const [guides, setGuides] = useState<GuideDoc[]>([]);
   const [metaTitle, setMetaTitle] = useState("");
+  const [metaTitleError, setMetaTitleError] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
   const [status, setStatus] = useState("Draft");
+
+  // English-only validation function
+  const isEnglishOnly = (text: string): boolean => {
+    // Allow English letters, numbers, spaces, and common punctuation
+    const englishOnlyRegex = /^[a-zA-Z0-9\s\-_.,!?()&:;'"]*$/;
+    return englishOnlyRegex.test(text);
+  };
+
+  // Handle Meta Title change with English validation
+  const handleMetaTitleChange = (value: string) => {
+    setMetaTitle(value);
+    
+    if (value && !isEnglishOnly(value)) {
+      setMetaTitleError("Meta Title must contain only English characters, numbers, and basic punctuation");
+    } else {
+      setMetaTitleError("");
+    }
+  };
   const [isFeatured, setIsFeatured] = useState(false);
   const [returnPolicy, setReturnPolicy] = useState("");
   const [warranty, setWarranty] = useState("");
@@ -318,6 +338,12 @@ export default function ProductForm() {
     if (!title || !regularPrice || !category) { 
       toast.error("Please fill in all required fields"); 
       return; 
+    }
+
+    // Meta Title validation
+    if (metaTitle && !isEnglishOnly(metaTitle)) {
+      toast.error("Meta Title must contain only English characters");
+      return;
     }
     
     if (!currentShop) {
@@ -812,9 +838,24 @@ export default function ProductForm() {
 
           <SectionCard title="SEO">
             <div className="space-y-2">
-              <Label>Meta Title</Label>
-              <Input value={metaTitle} onChange={(e) => setMetaTitle(e.target.value)} placeholder="SEO title" className="rounded-lg" />
-              <p className="text-xs text-muted-foreground">{metaTitle.length}/60</p>
+              <Label>Meta Title <span className="text-red-500">*</span></Label>
+              <Input 
+                value={metaTitle} 
+                onChange={(e) => handleMetaTitleChange(e.target.value)} 
+                placeholder="SEO title (English only)" 
+                className={`rounded-lg ${metaTitleError ? 'border-red-500 focus:border-red-500' : ''}`}
+              />
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  {metaTitleError && (
+                    <p className="text-xs text-red-500 mt-1">{metaTitleError}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Only English letters, numbers, and basic punctuation allowed
+                  </p>
+                </div>
+                <p className="text-xs text-muted-foreground ml-2">{metaTitle.length}/60</p>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Meta Description</Label>
