@@ -3,6 +3,11 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from decimal import Decimal
+from rest_framework.test import APITestCase
+
+from orders.models import Order, OrderItem
+from products.models import Product, Shop
 
 from .models import CustomerProfile, SellerProfile
 from .social_auth import encode_social_state
@@ -119,3 +124,80 @@ class SocialAuthCallbackTests(TestCase):
             query["social_error"][0],
             "Your seller request is pending admin approval.",
         )
+
+
+@override_settings(SECURE_SSL_REDIRECT=False)
+class DashboardShopScopeTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="dashboard_admin",
+            email="dashboard_admin@example.com",
+            password="test-pass-123",
+            role="Admin",
+        )
+        self.customer = User.objects.create_user(
+            username="dashboard_customer",
+            email="dashboard_customer@example.com",
+            password="test-pass-123",
+            role="Customer",
+        )
+        self.shop_one = Shop.objects.create(
+            seller=self.admin,
+            name="Admin Shop One",
+            category="General",
+        )
+        self.shop_two = Shop.objects.create(
+            seller=self.admin,
+            name="Admin Shop Two",
+            category="General",
+        )
+        self.product_one = Product.objects.create(
+            shop=self.shop_one,
+            title="Shop One Product",
+            price=Decimal("100.00"),
+        )
+        self.product_two = Product.objects.create(
+            shop=self.shop_two,
+            title="Shop Two Product",
+            price=Decimal("200.00"),
+        )
+
+        order_one = Order.objects.create(
+            customer=self.customer,
+            order_id="FPDASHSHOP001",
+            subtotal=Decimal("100.00"),
+            total_amount=Decimal("100.00"),
+            status="pending",
+        )
+        OrderItem.objects.create(
+            order=order_one,
+            product=self.product_one,
+            product_title=self.product_one.title,
+            quantity=1,
+            price=Decimal("100.00"),
+        )
+
+        order_two = Order.objects.create(
+            customer=self.customer,
+            order_id="FPDASHSHOP002",
+            subtotal=Decimal("200.00"),
+            total_amount=Decimal("200.00"),
+            status="pending",
+        )
+        OrderItem.objects.create(
+            order=order_two,
+            product=self.product_two,
+            product_title=self.product_two.title,
+            quantity=1,
+            price=Decimal("200.00"),
+        )
+
+    def test_admin_dashboard_honors_shop_filter(self):
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.get(f"/api/users/dashboard/stats/?shop={self.shop_one.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["stats"]["totalOrders"], 1)
+        self.assertEqual(response.data["stats"]["activeProducts"], 1)
+        self.assertEqual(response.data["stats"]["totalCustomers"], 1)
+        self.assertEqual(response.data["recentOrders"][0]["product"], "Shop One Product")

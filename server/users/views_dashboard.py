@@ -14,12 +14,49 @@ User = get_user_model()
 class DashboardStatsAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    def _shop_scoped_stats(self, shop_ids):
+        order_items = OrderItem.objects.filter(product__shop_id__in=shop_ids)
+        orders = Order.objects.filter(items__product__shop_id__in=shop_ids).distinct()
+        total_revenue = sum(item.price * item.quantity for item in order_items)
+        total_orders = orders.count()
+        total_customers = orders.values('customer').distinct().count()
+        active_products = Product.objects.filter(shop_id__in=shop_ids).count()
+
+        recent_order_items = (
+            order_items
+            .select_related('order', 'order__customer', 'product')
+            .order_by('-order__created_at')[:5]
+        )
+        recent = []
+        for item in recent_order_items:
+            recent.append({
+                'id': item.order.id,
+                'customer': item.order.customer.username if item.order.customer else 'Guest',
+                'product': item.product.title if item.product else item.product_title,
+                'amount': float(item.price * item.quantity),
+                'status': item.order.status,
+                'date': item.order.created_at
+            })
+
+        return {
+            'stats': {
+                'totalRevenue': f"${total_revenue:.2f}",
+                'totalOrders': total_orders,
+                'totalCustomers': total_customers,
+                'activeProducts': active_products,
+            },
+            'recentOrders': recent,
+        }
+
     def get(self, request):
         user = request.user
         shop_id = request.query_params.get('shop')
         
         # Admin stats vs Seller stats
         if is_admin_user(user):
+            if shop_id:
+                return Response(self._shop_scoped_stats([shop_id]))
+
             total_revenue = Order.objects.aggregate(Sum('total_amount'))['total_amount__sum'] or 0
             total_orders = Order.objects.count()
             total_customers = User.objects.filter(role='Customer').count()
@@ -49,33 +86,8 @@ class DashboardStatsAPIView(APIView):
                     shop_ids = [shop_id]
                 else:
                     shop_ids = list(user.shops.values_list('id', flat=True))
-                
-                # Orders containing products from this seller's shops
-                order_items = OrderItem.objects.filter(product__shop_id__in=shop_ids)
-                total_revenue = sum(item.price * item.quantity for item in order_items)
-                total_orders = order_items.values('order').distinct().count()
-                active_products = Product.objects.filter(shop_id__in=shop_ids).count()
-                
-                recent_order_items = order_items.select_related('order', 'order__customer').order_by('-order__created_at')[:5]
-                recent = []
-                for item in recent_order_items:
-                    recent.append({
-                        'id': item.order.id,
-                        'customer': item.order.customer.username if item.order.customer else 'Guest',
-                        'product': item.product.title,
-                        'amount': float(item.price * item.quantity),
-                        'status': item.order.status,
-                        'date': item.order.created_at
-                    })
-                
-                return Response({
-                    'stats': {
-                        'totalRevenue': f"${total_revenue:.2f}",
-                        'totalOrders': total_orders,
-                        'activeProducts': active_products
-                    },
-                    'recentOrders': recent
-                })
+
+                return Response(self._shop_scoped_stats(shop_ids))
                 
             except Exception as e:
                 return Response({'error': str(e)}, status=400)
