@@ -14,6 +14,8 @@ const ProductReviews = ({ product }: Props) => {
   const markHelpful = useMarkHelpful();
 
   const reviews = data?.reviews || [];
+  const reviewCount = data?.count || 0;
+  const averageRating = data?.averageRating || 0;
   const visibleReviews = showAll ? reviews : reviews.slice(0, 3);
 
   return (
@@ -21,13 +23,13 @@ const ProductReviews = ({ product }: Props) => {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h3 className="text-xl font-bold">Reviews</h3>
-          <span className="text-2xl font-bold">{product.rating}</span>
+          <span className="text-2xl font-bold">{averageRating.toFixed(1)}</span>
           <div className="flex items-center gap-0.5">
             {Array.from({ length: 5 }).map((_, i) => (
-              <Star key={i} className={`w-5 h-5 ${i < Math.floor(product.rating) ? "fill-star text-star" : "text-border"}`} />
+              <Star key={i} className={`w-5 h-5 ${i < Math.floor(averageRating) ? "fill-star text-star" : "text-border"}`} />
             ))}
           </div>
-          <span className="text-sm text-muted-foreground">{product.reviews} ratings</span>
+          <span className="text-sm text-muted-foreground">{reviewCount} ratings</span>
         </div>
       </div>
 
