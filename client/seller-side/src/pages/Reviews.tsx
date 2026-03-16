@@ -41,10 +41,17 @@ export default function Reviews() {
   const filtered = useMemo(
     () =>
       reviews.filter(
-        (review) =>
-          review.product_name.toLowerCase().includes(search.toLowerCase()) ||
-          review.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-          review.customer_email.toLowerCase().includes(search.toLowerCase())
+        (review) => {
+          const productName = review.product?.title || review.product_name || '';
+          const customerName = review.user_name || review.customer_name || '';
+          const customerEmail = review.user?.email || review.customer_email || '';
+          
+          return (
+            productName.toLowerCase().includes(search.toLowerCase()) ||
+            customerName.toLowerCase().includes(search.toLowerCase()) ||
+            customerEmail.toLowerCase().includes(search.toLowerCase())
+          );
+        }
       ),
     [reviews, search]
   );
@@ -123,23 +130,23 @@ export default function Reviews() {
                 return (
                   <tr key={review.id}>
                     <td className="font-medium max-w-[180px] truncate pl-5">
-                      {review.product_name || "Product"}
+                      {review.product?.title || review.product_name || "Product"}
                     </td>
                     <td>
                       <div>
-                        <p>{review.customer_name}</p>
-                        <p className="text-xs text-muted-foreground">{review.customer_email}</p>
+                        <p>{review.user_name || review.customer_name || "Customer"}</p>
+                        <p className="text-xs text-muted-foreground">{review.user?.email || review.customer_email || ""}</p>
                       </div>
                     </td>
                     <td>
                       <Stars count={review.rating} />
                     </td>
-                    <td className="max-w-[240px] truncate text-muted-foreground">{review.comment}</td>
+                    <td className="max-w-[240px] truncate text-muted-foreground">{review.text || review.comment || ""}</td>
                     <td>
                       <span className={statusClass[uiStatus]}>{uiStatus}</span>
                     </td>
                     <td className="text-muted-foreground">
-                      {new Date(review.created_at).toISOString().slice(0, 10)}
+                      {new Date(review.created_at || review.date).toISOString().slice(0, 10)}
                     </td>
                     <td className="pr-5">
                       <DropdownMenu>

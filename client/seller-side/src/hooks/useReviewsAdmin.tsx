@@ -6,15 +6,26 @@ export type ReviewStatus = "published" | "pending" | "rejected";
 
 export interface SellerReview {
   id: number;
-  product: number;
-  user: number;
-  user_name: string;
+  product?: {
+    id: number;
+    title: string;
+  } | number;
+  product_name?: string;
+  user?: {
+    id: number;
+    username: string;
+    email: string;
+  } | number;
+  user_name?: string;
+  customer_name?: string;
+  customer_email?: string;
   rating: number;
-  text: string;
-  helpful: number;
+  text?: string;
+  comment?: string;
+  helpful?: number;
   status: ReviewStatus;
   created_at: string;
-  date: string;
+  date?: string;
 }
 
 const QUERY_KEY = ["seller_reviews"];
