@@ -323,7 +323,7 @@ const ProductDetail = () => {
 
             {/* Available Coupons */}
             <div className="mb-6">
-              <ProductCoupons productId={productId || ""} />
+              <ProductCoupons productId={product.id.toString()} />
             </div>
 
             {/* Color selection - Show if product has color variants enabled */}
