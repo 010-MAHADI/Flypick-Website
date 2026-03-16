@@ -269,6 +269,33 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Allowing sellers/admins to update status
         kwargs['partial'] = True
         return self.update(request, *args, **kwargs)
+    
+    @action(detail=True, methods=['patch'])
+    def cancel(self, request, pk=None):
+        """Allow customers to cancel their own pending orders"""
+        order = self.get_object()
+        
+        # Check if the user is the order owner
+        if order.customer != request.user:
+            return Response(
+                {'detail': 'You can only cancel your own orders.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if order can be cancelled (only pending orders)
+        if order.status != 'pending':
+            return Response(
+                {'detail': f'Cannot cancel order with status "{order.status}". Only pending orders can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update order status to cancelled
+        order.status = 'cancelled'
+        order.save(update_fields=['status'])
+        
+        # Return updated order
+        serializer = OrderSerializer(order, context={'request': request})
+        return Response(serializer.data)
 
 
 class PaymentMethodViewSet(viewsets.ModelViewSet):

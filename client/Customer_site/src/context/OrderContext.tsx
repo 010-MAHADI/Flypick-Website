@@ -47,6 +47,7 @@ interface OrderContextType {
   loading: boolean;
   fetchOrders: () => Promise<void>;
   getOrder: (orderId: string) => Order | undefined;
+  cancelOrder: (orderId: string) => Promise<boolean>;
 }
 
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
@@ -82,6 +83,32 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
     return orders.find(order => order.order_id === orderId);
   };
 
+  const cancelOrder = async (orderId: string): Promise<boolean> => {
+    try {
+      const order = orders.find(o => o.order_id === orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      // Call the cancel API endpoint
+      await api.patch(`/orders/orders/${order.id}/cancel/`);
+      
+      // Update the local state
+      setOrders(prevOrders => 
+        prevOrders.map(o => 
+          o.order_id === orderId 
+            ? { ...o, status: 'cancelled' }
+            : o
+        )
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to cancel order:', error);
+      return false;
+    }
+  };
+
   // Fetch orders when user logs in
   useEffect(() => {
     if (user) {
@@ -92,7 +119,7 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
   }, [user]);
 
   return (
-    <OrderContext.Provider value={{ orders, loading, fetchOrders, getOrder }}>
+    <OrderContext.Provider value={{ orders, loading, fetchOrders, getOrder, cancelOrder }}>
       {children}
     </OrderContext.Provider>
   );

@@ -1,9 +1,11 @@
 import { Link, useParams } from "react-router-dom";
-import { Package, MapPin, CreditCard, Copy, ArrowLeft, Truck, Tag, RotateCcw, Star } from "lucide-react";
+import { Package, MapPin, CreditCard, Copy, ArrowLeft, Truck, Tag, RotateCcw, Star, XCircle } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useOrders } from "@/context/OrderContext";
 import { generateProductUrl } from "@/lib/slugify";
+import { toast } from "sonner";
+import { useState } from "react";
 
 const paymentLabels: Record<string, string> = {
   cod: "Cash on Delivery",
@@ -24,7 +26,8 @@ const statusColorMap: Record<string, string> = {
 
 const OrderDetail = () => {
   const { orderId } = useParams();
-  const { orders } = useOrders();
+  const { orders, cancelOrder } = useOrders();
+  const [cancelling, setCancelling] = useState(false);
   const order = orders.find((o) => o.order_id === orderId);
 
   if (!order) {
@@ -45,6 +48,26 @@ const OrderDetail = () => {
   const handleCopy = () => navigator.clipboard.writeText(order.order_id);
   const canTrack = order.status === "processing" || order.status === "shipped";
   const statusColor = statusColorMap[order.status] || "text-muted-foreground";
+
+  const handleCancelOrder = async () => {
+    if (!confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
+      return;
+    }
+
+    setCancelling(true);
+    try {
+      const success = await cancelOrder(order.order_id);
+      if (success) {
+        toast.success('Order cancelled successfully');
+      } else {
+        toast.error('Failed to cancel order. Please try again.');
+      }
+    } catch (error) {
+      toast.error('Failed to cancel order. Please try again.');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const subtotal = parseFloat(order.subtotal || "0");
   const shipping = parseFloat(order.shipping_cost || "0");
@@ -80,6 +103,27 @@ const OrderDetail = () => {
               </p>
             </div>
             <div className="flex gap-2">
+              {/* Cancel Order Button - Only show for pending orders */}
+              {order.status === "pending" && (
+                <button
+                  onClick={handleCancelOrder}
+                  disabled={cancelling}
+                  className="text-center text-sm font-bold py-2.5 px-6 rounded-lg border-2 border-destructive text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  {cancelling ? (
+                    <>
+                      <div className="w-4 h-4 border border-destructive border-t-transparent rounded-full animate-spin"></div>
+                      Cancelling...
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-4 h-4" />
+                      Cancel Order
+                    </>
+                  )}
+                </button>
+              )}
+              
               {canTrack && (
                 <Link
                   to={`/track-order/${order.order_id}`}

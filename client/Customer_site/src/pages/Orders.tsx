@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Package, Copy, ChevronDown, RotateCcw } from "lucide-react";
+import { Package, Copy, ChevronDown, RotateCcw, XCircle } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useOrders, Order } from "@/context/OrderContext";
+import { toast } from "sonner";
 
 const STATUS_TABS = [
   { key: "all", label: "All" },
@@ -17,9 +18,10 @@ const STATUS_TABS = [
 type TabKey = typeof STATUS_TABS[number]["key"];
 
 const Orders = () => {
-  const { orders, loading } = useOrders();
+  const { orders, loading, cancelOrder } = useOrders();
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [cancellingOrder, setCancellingOrder] = useState<string | null>(null);
 
   const filteredOrders = orders
     .filter((o) => activeTab === "all" || o.status === activeTab)
@@ -36,6 +38,26 @@ const Orders = () => {
 
   const handleCopyId = (id: string) => {
     navigator.clipboard.writeText(id);
+  };
+
+  const handleCancelOrder = async (orderId: string) => {
+    if (!confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
+      return;
+    }
+
+    setCancellingOrder(orderId);
+    try {
+      const success = await cancelOrder(orderId);
+      if (success) {
+        toast.success('Order cancelled successfully');
+      } else {
+        toast.error('Failed to cancel order. Please try again.');
+      }
+    } catch (error) {
+      toast.error('Failed to cancel order. Please try again.');
+    } finally {
+      setCancellingOrder(null);
+    }
   };
 
   if (loading) {
@@ -126,7 +148,13 @@ const Orders = () => {
         ) : (
           <div className="space-y-3">
             {filteredOrders.map((order) => (
-              <OrderCard key={order.id} order={order} onCopyId={handleCopyId} />
+              <OrderCard 
+                key={order.id} 
+                order={order} 
+                onCopyId={handleCopyId}
+                onCancelOrder={handleCancelOrder}
+                cancellingOrder={cancellingOrder}
+              />
             ))}
           </div>
         )}
@@ -136,7 +164,17 @@ const Orders = () => {
   );
 };
 
-const OrderCard = ({ order, onCopyId }: { order: Order; onCopyId: (id: string) => void }) => {
+const OrderCard = ({ 
+  order, 
+  onCopyId, 
+  onCancelOrder, 
+  cancellingOrder 
+}: { 
+  order: Order; 
+  onCopyId: (id: string) => void;
+  onCancelOrder: (orderId: string) => void;
+  cancellingOrder: string | null;
+}) => {
   const statusColor = {
     pending: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
     processing: "bg-primary/10 text-primary border-primary/20",
@@ -230,6 +268,28 @@ const OrderCard = ({ order, onCopyId }: { order: Order; onCopyId: (id: string) =
           >
             View Details
           </Link>
+          
+          {/* Cancel Order Button - Only show for pending orders */}
+          {order.status === "pending" && (
+            <button
+              onClick={() => onCancelOrder(order.order_id)}
+              disabled={cancellingOrder === order.order_id}
+              className="flex-1 text-center text-sm font-medium py-2.5 rounded-lg border-2 border-destructive text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
+            >
+              {cancellingOrder === order.order_id ? (
+                <>
+                  <div className="w-3 h-3 border border-destructive border-t-transparent rounded-full animate-spin"></div>
+                  Cancelling...
+                </>
+              ) : (
+                <>
+                  <XCircle className="w-3.5 h-3.5" />
+                  Cancel Order
+                </>
+              )}
+            </button>
+          )}
+          
           {(order.status === "processing" || order.status === "shipped") && (
             <Link to={`/track-order/${order.order_id}`} className="flex-1 text-center text-sm font-bold py-2.5 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
               Track Order
