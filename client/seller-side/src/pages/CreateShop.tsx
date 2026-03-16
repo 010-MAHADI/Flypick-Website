@@ -167,37 +167,6 @@ function CreateShop() {
       setIsSubmitting(false);
     }
   };
-        const fallbackCategoryObjects = fallbackCategories.map((name, index) => ({
-          id: index + 1,
-          name,
-          slug: name.toLowerCase().replace(/\s+/g, '-'),
-        }));
-        setCategories(fallbackCategoryObjects);
-      } finally {
-        setLoadingCategories(false);
-      }
-    };
-
-    fetchCategories();
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (user?.role !== "Seller") {
-      toast.error("Only seller accounts can create shops.");
-      navigate("/");
-      return;
-    }
-
-    if (shops.length >= MAX_SHOPS) {
-      toast.error(`You can create up to ${MAX_SHOPS} shops only.`);
-      navigate("/shop-selector");
-      return;
-    }
-
-    if (!formData.name || !formData.category || !formData.description) {
-      toast.error("Please fill in all required fields");
       return;
     }
 
