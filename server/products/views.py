@@ -80,9 +80,10 @@ class ShopViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
+    public_actions = {'list', 'retrieve', 'resolve'}
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
+        if self.action in self.public_actions:
             permission_classes = [permissions.AllowAny]
         else:
             permission_classes = [permissions.IsAuthenticated]
@@ -90,9 +91,12 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         base_qs = Product.objects.select_related('shop', 'category_fk').prefetch_related('gallery_images', 'gallery_videos')
+
+        if self.action == 'resolve':
+            return base_qs
         
         # For public access (list/retrieve without auth or for customers)
-        if self.action in ['list', 'retrieve']:
+        if self.action in self.public_actions:
             # If user is authenticated and is a seller/admin, filter by their shops
             if self.request.user and self.request.user.is_authenticated:
                 if is_admin_user(self.request.user):
