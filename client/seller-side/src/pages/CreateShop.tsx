@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShop } from "@/context/ShopContext";
 import { useAuth } from "@/context/AuthContext";
@@ -20,7 +20,8 @@ import api from "@/lib/api";
 
 const MAX_SHOPS = 5;
 
-const categories = [
+// Fallback categories if API fails
+const fallbackCategories = [
   "Electronics",
   "Clothing & Fashion",
   "Home & Garden",
@@ -35,17 +36,61 @@ const categories = [
 
 const emojiOptions = ["🏪", "🛍️", "🏬", "🎯", "💼", "🎨", "⚡", "🌟", "🔥", "💎", "🚀", "🎁"];
 
-export default function CreateShop() {
+interface Category {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+function CreateShop() {
   const navigate = useNavigate();
   const { shops, addShop, setCurrentShop } = useShop();
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     logo: "🏪",
     category: "",
     description: "",
   });
+
+  // Fetch categories from API
+  useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await api.get('/products/categories/');
+        const categoryData = response.data?.results || response.data || [];
+
+        if (Array.isArray(categoryData) && categoryData.length > 0) {
+          setCategories(categoryData);
+        } else {
+          // Create fallback categories if none exist
+          console.warn('No categories found, using fallback categories');
+          const fallbackCategoryObjects = fallbackCategories.map((name, index) => ({
+            id: index + 1,
+            name,
+            slug: name.toLowerCase().replace(/\s+/g, '-'),
+          }));
+          setCategories(fallbackCategoryObjects);
+        }
+      } catch (error) {
+        console.error('Failed to fetch categories:', error);
+        // Use fallback categories
+        const fallbackCategoryObjects = fallbackCategories.map((name, index) => ({
+          id: index + 1,
+          name,
+          slug: name.toLowerCase().replace(/\s+/g, '-'),
+        }));
+        setCategories(fallbackCategoryObjects);
+      } finally {
+        setLoadingCategories(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,10 +115,13 @@ export default function CreateShop() {
     setIsSubmitting(true);
 
     try {
+      // Find the selected category object to get its ID
+      const selectedCategory = categories.find(cat => cat.id.toString() === formData.category);
+      
       // Create shop in backend
       const response = await api.post('/products/shops/', {
         name: formData.name,
-        category: formData.category,
+        category: selectedCategory ? selectedCategory.id : parseInt(formData.category), // Send category ID
         description: formData.description,
         status: 'active',
       });
@@ -85,7 +133,7 @@ export default function CreateShop() {
         id: response.data.id.toString(),
         name: response.data.name,
         logo: formData.logo,
-        category: response.data.category,
+        category: selectedCategory ? selectedCategory.name : formData.category,
         description: response.data.description,
         status: response.data.status as "active" | "inactive",
         createdAt: response.data.createdDate || new Date().toISOString(),
@@ -98,10 +146,111 @@ export default function CreateShop() {
     } catch (error: any) {
       console.error("Failed to create shop:", error);
       console.error("Error response:", error.response?.data);
-      const errorMessage = error.response?.data?.detail || 
-                          error.response?.data?.name?.[0] ||
-                          error.response?.data?.non_field_errors?.[0] ||
-                          "Failed to create shop. Please try again.";
+      
+      let errorMessage = "Failed to create shop. Please try again.";
+      
+      if (error.response?.data) {
+        const data = error.response.data;
+        if (data.category && Array.isArray(data.category)) {
+          errorMessage = `Category error: ${data.category[0]}`;
+        } else if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.name && Array.isArray(data.name)) {
+          errorMessage = `Name error: ${data.name[0]}`;
+        } else if (data.non_field_errors && Array.isArray(data.non_field_errors)) {
+          errorMessage = data.non_field_errors[0];
+        }
+      }
+      
+      toast.error(errorMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+        const fallbackCategoryObjects = fallbackCategories.map((name, index) => ({
+          id: index + 1,
+          name,
+          slug: name.toLowerCase().replace(/\s+/g, '-'),
+        }));
+        setCategories(fallbackCategoryObjects);
+      } finally {
+        setLoadingCategories(false);
+      }
+    };
+
+    fetchCategories();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (user?.role !== "Seller") {
+      toast.error("Only seller accounts can create shops.");
+      navigate("/");
+      return;
+    }
+
+    if (shops.length >= MAX_SHOPS) {
+      toast.error(`You can create up to ${MAX_SHOPS} shops only.`);
+      navigate("/shop-selector");
+      return;
+    }
+
+    if (!formData.name || !formData.category || !formData.description) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Find the selected category object to get its ID
+      const selectedCategory = categories.find(cat => cat.id.toString() === formData.category);
+
+      // Create shop in backend
+      const response = await api.post('/products/shops/', {
+        name: formData.name,
+        category: selectedCategory ? selectedCategory.id : parseInt(formData.category), // Send category ID
+        description: formData.description,
+        status: 'active',
+      });
+
+      console.log("Shop created:", response.data);
+
+      // Add shop to local context with backend ID
+      const newShop = {
+        id: response.data.id.toString(),
+        name: response.data.name,
+        logo: formData.logo,
+        category: selectedCategory ? selectedCategory.name : formData.category,
+        description: response.data.description,
+        status: response.data.status as "active" | "inactive",
+        createdAt: response.data.createdDate || new Date().toISOString(),
+      };
+
+      addShop(newShop);
+      setCurrentShop(newShop);
+      toast.success("Shop created successfully!");
+      navigate("/");
+    } catch (error: any) {
+      console.error("Failed to create shop:", error);
+      console.error("Error response:", error.response?.data);
+
+      let errorMessage = "Failed to create shop. Please try again.";
+
+      if (error.response?.data) {
+        const data = error.response.data;
+        if (data.category && Array.isArray(data.category)) {
+          errorMessage = `Category error: ${data.category[0]}`;
+        } else if (data.detail) {
+          errorMessage = data.detail;
+        } else if (data.name && Array.isArray(data.name)) {
+          errorMessage = `Name error: ${data.name[0]}`;
+        } else if (data.non_field_errors && Array.isArray(data.non_field_errors)) {
+          errorMessage = data.non_field_errors[0];
+        }
+      }
+
       toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -170,14 +319,15 @@ export default function CreateShop() {
               <Select
                 value={formData.category}
                 onValueChange={(value) => setFormData({ ...formData, category: value })}
+                disabled={loadingCategories}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a category" />
+                  <SelectValue placeholder={loadingCategories ? "Loading categories..." : "Select a category"} />
                 </SelectTrigger>
                 <SelectContent>
                   {categories.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
+                    <SelectItem key={cat.id} value={cat.id.toString()}>
+                      {cat.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -211,7 +361,7 @@ export default function CreateShop() {
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Back
               </Button>
-              <Button type="submit" className="flex-1" disabled={isSubmitting}>
+              <Button type="submit" className="flex-1" disabled={isSubmitting || loadingCategories}>
                 <Store className="h-4 w-4 mr-2" />
                 {isSubmitting ? "Creating..." : "Create Shop"}
               </Button>
@@ -222,3 +372,4 @@ export default function CreateShop() {
     </div>
   );
 }
+

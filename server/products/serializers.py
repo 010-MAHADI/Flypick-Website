@@ -150,3 +150,22 @@ class ShopSerializer(serializers.ModelSerializer):
         model = Shop
         fields = '__all__'
         read_only_fields = ['seller', 'revenue', 'commission', 'category_name']
+    
+    def create(self, validated_data):
+        # Set the seller to the current user
+        validated_data['seller'] = self.context['request'].user
+        return super().create(validated_data)
+    
+    def to_representation(self, instance):
+        """Custom representation to handle category display"""
+        data = super().to_representation(instance)
+        
+        # If category_fk exists, use it; otherwise fall back to the old category field
+        if instance.category_fk:
+            data['category'] = instance.category_fk.id
+            data['category_name'] = instance.category_fk.name
+        elif instance.category:
+            # For backward compatibility, show the old category string
+            data['category_name'] = instance.category
+        
+        return data
