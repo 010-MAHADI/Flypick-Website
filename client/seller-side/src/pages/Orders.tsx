@@ -85,6 +85,21 @@ interface Order {
   refunds?: RefundRecord[];
 }
 
+type DocumentVariant = "standard" | "post_office";
+type DocumentAction = "print" | "download";
+
+interface DocumentDialogState {
+  open: boolean;
+  action: DocumentAction;
+  orderId: string;
+  senderName: string;
+  senderPhone: string;
+  senderAddress: string;
+  receiverName: string;
+  receiverPhone: string;
+  receiverAddress: string;
+}
+
 const defaultOrders: Order[] = [];
 
 const orderStatusClass: Record<string, string> = {
@@ -304,6 +319,445 @@ const PAYMENT_METHODS = [
   "Other",
 ];
 
+const DOCUMENT_SENDER_STORAGE_KEY = "seller-order-document-sender";
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+
+function cleanField(value?: string | null) {
+  const trimmed = (value || "").trim();
+  return trimmed && trimmed !== "-" ? trimmed : "";
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
+}
+
+function formatMoney(amount: number) {
+  return currencyFormatter.format(Number.isFinite(amount) ? amount : 0);
+}
+
+function formatStatusLabel(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getOrderSubtotal(order: Order) {
+  return order.items.reduce((sum, item) => sum + item.price * item.qty, 0);
+}
+
+function getOrderShipping(order: Order) {
+  const subtotal = getOrderSubtotal(order);
+  return Math.max(order.amount - subtotal, 0);
+}
+
+function formatAddressBlock(lines: string[]) {
+  return lines
+    .map((line) => escapeHtml(cleanField(line)))
+    .filter(Boolean)
+    .join("<br />");
+}
+
+function getOrderAddressLines(order: Order) {
+  const cityStateZip = [cleanField(order.address.city), cleanField(order.address.state), cleanField(order.address.zip)]
+    .filter(Boolean)
+    .join(", ");
+
+  return [
+    cleanField(order.customer),
+    cleanField(order.phone),
+    cleanField(order.address.street),
+    cityStateZip,
+    cleanField(order.address.country),
+  ].filter(Boolean);
+}
+
+function getSenderStorageKey(shopId?: number) {
+  return `${DOCUMENT_SENDER_STORAGE_KEY}:${shopId ?? "default"}`;
+}
+
+function loadSavedSenderDetails(shopId?: number) {
+  if (typeof window === "undefined") {
+    return { senderName: "", senderPhone: "", senderAddress: "" };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getSenderStorageKey(shopId));
+    if (!raw) {
+      return { senderName: "", senderPhone: "", senderAddress: "" };
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      senderName: cleanField(parsed?.senderName),
+      senderPhone: cleanField(parsed?.senderPhone),
+      senderAddress: cleanField(parsed?.senderAddress),
+    };
+  } catch {
+    return { senderName: "", senderPhone: "", senderAddress: "" };
+  }
+}
+
+function saveSenderDetails(shopId: number | undefined, values: { senderName: string; senderPhone: string; senderAddress: string }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(
+    getSenderStorageKey(shopId),
+    JSON.stringify({
+      senderName: cleanField(values.senderName),
+      senderPhone: cleanField(values.senderPhone),
+      senderAddress: cleanField(values.senderAddress),
+    }),
+  );
+}
+
+function buildOrderDocumentHtml({
+  order,
+  shopName,
+  variant,
+  sender,
+  receiver,
+  autoPrint,
+}: {
+  order: Order;
+  shopName: string;
+  variant: DocumentVariant;
+  sender?: { name: string; phone: string; address: string };
+  receiver?: { name: string; phone: string; address: string };
+  autoPrint?: boolean;
+}) {
+  const subtotal = getOrderSubtotal(order);
+  const shipping = getOrderShipping(order);
+  const receiverLines = receiver
+    ? [
+        cleanField(receiver.name),
+        cleanField(receiver.phone),
+        ...cleanField(receiver.address).split(/\r?\n/).map((line) => cleanField(line)),
+      ].filter(Boolean)
+    : getOrderAddressLines(order);
+  const senderLines = sender
+    ? [
+        cleanField(sender.name),
+        cleanField(sender.phone),
+        ...cleanField(sender.address).split(/\r?\n/).map((line) => cleanField(line)),
+      ].filter(Boolean)
+    : [];
+  const trackingNumber = cleanField(order.trackingNumber) || "Pending assignment";
+  const variantTitle = variant === "post_office" ? "Post Office Invoice / AWB" : "Invoice / AWB";
+  const variantBadge = variant === "post_office" ? "POST OFFICE" : "STANDARD";
+  const rightColumnHtml = variant === "post_office"
+    ? `
+      <div class="panel emphasis">
+        <div class="panel-label">Sender Address</div>
+        <div class="address-block">${formatAddressBlock(senderLines.length ? senderLines : [shopName, "Add sender address before printing"])}</div>
+      </div>
+      <div class="panel">
+        <div class="panel-label">Delivery Address</div>
+        <div class="address-block">${formatAddressBlock(receiverLines)}</div>
+      </div>
+      <div class="panel meta-panel">
+        <div class="panel-label">Dispatch Details</div>
+        <div class="meta-grid">
+          <div><span>Order ID</span><strong>${escapeHtml(order.id)}</strong></div>
+          <div><span>Tracking</span><strong>${escapeHtml(trackingNumber)}</strong></div>
+          <div><span>Payment</span><strong>${escapeHtml(order.payment)}</strong></div>
+          <div><span>Status</span><strong>${escapeHtml(formatStatusLabel(order.status))}</strong></div>
+        </div>
+      </div>
+    `
+    : `
+      <div class="panel emphasis grow">
+        <div class="panel-label">Delivery Address</div>
+        <div class="address-block">${formatAddressBlock(receiverLines)}</div>
+      </div>
+      <div class="panel meta-panel">
+        <div class="panel-label">Shipping Details</div>
+        <div class="meta-grid">
+          <div><span>Tracking</span><strong>${escapeHtml(trackingNumber)}</strong></div>
+          <div><span>Payment</span><strong>${escapeHtml(order.payment)}</strong></div>
+          <div><span>Method</span><strong>${escapeHtml(order.paymentMethod)}</strong></div>
+          <div><span>Customer</span><strong>${escapeHtml(order.customer)}</strong></div>
+        </div>
+      </div>
+    `;
+
+  return `
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(order.id)} ${variantTitle}</title>
+  <style>
+    @page { size: A4 landscape; margin: 10mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #f3f4f6; color: #111827; font-family: Arial, Helvetica, sans-serif; }
+    body { padding: 0; }
+    .sheet {
+      width: 100%;
+      min-height: calc(210mm - 20mm);
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+    }
+    .left, .right { padding: 16mm 14mm; }
+    .right { border-left: 1px dashed #9ca3af; background: #fafafa; display: flex; flex-direction: column; gap: 12px; }
+    .brand-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .brand p {
+      margin: 6px 0 0;
+      color: #4b5563;
+      font-size: 13px;
+    }
+    .badge {
+      border: 1px solid #111827;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .meta-table {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 18px;
+      padding: 14px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      margin-bottom: 18px;
+    }
+    .meta-item span, .panel-label, .totals span:first-child, .signature span {
+      display: block;
+      color: #6b7280;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .meta-item strong, .meta-grid strong {
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 6px;
+    }
+    th, td {
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      padding: 10px 8px;
+      font-size: 12px;
+      vertical-align: top;
+    }
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7280;
+      background: #f9fafb;
+    }
+    .money, .qty { text-align: right; white-space: nowrap; }
+    .sku {
+      display: block;
+      margin-top: 4px;
+      color: #6b7280;
+      font-size: 11px;
+    }
+    .totals {
+      width: 260px;
+      margin-left: auto;
+      margin-top: 16px;
+      border-top: 1px solid #d1d5db;
+      padding-top: 12px;
+    }
+    .totals-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .totals-row.total {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #111827;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .panel {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      padding: 14px;
+    }
+    .panel.emphasis {
+      border-color: #111827;
+      background: #f8fafc;
+    }
+    .panel.grow { flex: 1; }
+    .address-block {
+      font-size: 18px;
+      line-height: 1.6;
+      font-weight: 700;
+      white-space: normal;
+      word-break: break-word;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .meta-grid span {
+      display: block;
+      color: #6b7280;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .footer {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 28px;
+    }
+    .signature {
+      border-top: 1px solid #9ca3af;
+      padding-top: 10px;
+      min-height: 48px;
+    }
+    .note {
+      margin-top: 16px;
+      padding: 10px 12px;
+      border-left: 4px solid #111827;
+      background: #f9fafb;
+      color: #374151;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    @media print {
+      html, body { background: #ffffff; }
+      .sheet { border: none; min-height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <section class="left">
+      <div class="brand-row">
+        <div class="brand">
+          <h1>${escapeHtml(variantTitle)}</h1>
+          <p>${escapeHtml(shopName || "Flypick Seller")} dispatch document</p>
+        </div>
+        <div class="badge">${escapeHtml(variantBadge)}</div>
+      </div>
+
+      <div class="meta-table">
+        <div class="meta-item"><span>Order ID</span><strong>${escapeHtml(order.id)}</strong></div>
+        <div class="meta-item"><span>Order Date</span><strong>${escapeHtml(order.date)}</strong></div>
+        <div class="meta-item"><span>Payment</span><strong>${escapeHtml(order.payment)}</strong></div>
+        <div class="meta-item"><span>Status</span><strong>${escapeHtml(formatStatusLabel(order.status))}</strong></div>
+        <div class="meta-item"><span>Tracking Number</span><strong>${escapeHtml(trackingNumber)}</strong></div>
+        <div class="meta-item"><span>Customer Email</span><strong>${escapeHtml(cleanField(order.email) || "N/A")}</strong></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 44%;">Item</th>
+            <th>SKU</th>
+            <th class="qty">Qty</th>
+            <th class="money">Unit Price</th>
+            <th class="money">Line Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${order.items.map((item) => `
+            <tr>
+              <td>
+                <strong>${escapeHtml(item.name)}</strong>
+                <span class="sku">${escapeHtml(item.sku)}</span>
+              </td>
+              <td>${escapeHtml(item.sku)}</td>
+              <td class="qty">${item.qty}</td>
+              <td class="money">${formatMoney(item.price)}</td>
+              <td class="money">${formatMoney(item.price * item.qty)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+
+      <div class="totals">
+        <div class="totals-row"><span>Subtotal</span><strong>${formatMoney(subtotal)}</strong></div>
+        <div class="totals-row"><span>Shipping</span><strong>${formatMoney(shipping)}</strong></div>
+        <div class="totals-row total"><span>Total</span><strong>${formatMoney(order.amount)}</strong></div>
+      </div>
+
+      <div class="note">
+        ${variant === "post_office"
+          ? "Prepared for post office dispatch. Please verify sender and receiver details before handing over the parcel."
+          : "Prepared as a standard invoice and delivery label. Please verify tracking and delivery details before dispatch."}
+      </div>
+
+      <div class="footer">
+        <div class="signature"><span>Prepared By</span>${escapeHtml(shopName || "Seller Team")}</div>
+        <div class="signature"><span>Received / Courier Signature</span></div>
+      </div>
+    </section>
+
+    <aside class="right">
+      ${rightColumnHtml}
+    </aside>
+  </main>
+  ${autoPrint ? `
+  <script>
+    window.addEventListener("load", function () {
+      window.focus();
+      setTimeout(function () {
+        window.print();
+      }, 250);
+    });
+    window.addEventListener("afterprint", function () {
+      window.close();
+    });
+  </script>
+  ` : ""}
+</body>
+</html>
+  `;
+}
+
 export default function Orders() {
   const { currentShop } = useShop();
   const selectedShopId = currentShop?.id ? Number(currentShop.id) : undefined;
@@ -396,6 +850,17 @@ export default function Orders() {
   });
   const [refundDialog, setRefundDialog] = useState<RefundDialogState>({
     open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {},
+  });
+  const [documentDialog, setDocumentDialog] = useState<DocumentDialogState>({
+    open: false,
+    action: "print",
+    orderId: "",
+    senderName: "",
+    senderPhone: "",
+    senderAddress: "",
+    receiverName: "",
+    receiverPhone: "",
+    receiverAddress: "",
   });
 
   const filtered = useMemo(() => {
@@ -665,6 +1130,133 @@ export default function Orders() {
     toast.success("Copied to clipboard");
   };
 
+  const createDocumentFileName = (orderId: string, variant: DocumentVariant) =>
+    `${orderId}-${variant === "post_office" ? "post-office-awb" : "invoice-awb"}.html`;
+
+  const runDocumentAction = (
+    order: Order,
+    variant: DocumentVariant,
+    action: DocumentAction,
+    overrides?: {
+      sender?: { name: string; phone: string; address: string };
+      receiver?: { name: string; phone: string; address: string };
+    },
+  ) => {
+    const html = buildOrderDocumentHtml({
+      order,
+      shopName: currentShop?.name || "Seller Shop",
+      variant,
+      sender: overrides?.sender,
+      receiver: overrides?.receiver,
+      autoPrint: action === "print",
+    });
+
+    if (action === "print") {
+      const printWindow = window.open("", "_blank", "noopener,noreferrer,width=1200,height=800");
+      if (!printWindow) {
+        toast.error("Popup blocked. Please allow popups to print documents.");
+        return;
+      }
+
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      toast.success(variant === "post_office" ? "Post office print preview opened" : "Invoice / AWB print preview opened");
+      return;
+    }
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = createDocumentFileName(order.id, variant);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    toast.success(variant === "post_office" ? "Post office document downloaded" : "Invoice / AWB document downloaded");
+  };
+
+  const openPostOfficeDocumentDialog = (orderId: string, action: DocumentAction) => {
+    const order = orders.find((item) => item.id === orderId);
+    if (!order) {
+      toast.error("Order not found");
+      return;
+    }
+
+    const savedSender = loadSavedSenderDetails(selectedShopId);
+    setDocumentDialog({
+      open: true,
+      action,
+      orderId,
+      senderName: savedSender.senderName || currentShop?.name || "",
+      senderPhone: savedSender.senderPhone || "",
+      senderAddress: savedSender.senderAddress || "",
+      receiverName: cleanField(order.customer),
+      receiverPhone: cleanField(order.phone),
+      receiverAddress: getOrderAddressLines(order).slice(2).join("\n"),
+    });
+  };
+
+  const handleStandardDocument = (orderId: string, action: DocumentAction) => {
+    const order = orders.find((item) => item.id === orderId);
+    if (!order) {
+      toast.error("Order not found");
+      return;
+    }
+
+    runDocumentAction(order, "standard", action);
+  };
+
+  const submitPostOfficeDocument = () => {
+    const order = orders.find((item) => item.id === documentDialog.orderId);
+    if (!order) {
+      toast.error("Order not found");
+      return;
+    }
+
+    if (!cleanField(documentDialog.senderName) || !cleanField(documentDialog.senderAddress)) {
+      toast.error("Sender name and sender address are required");
+      return;
+    }
+
+    if (!cleanField(documentDialog.receiverName) || !cleanField(documentDialog.receiverAddress)) {
+      toast.error("Delivery name and delivery address are required");
+      return;
+    }
+
+    saveSenderDetails(selectedShopId, {
+      senderName: documentDialog.senderName,
+      senderPhone: documentDialog.senderPhone,
+      senderAddress: documentDialog.senderAddress,
+    });
+
+    runDocumentAction(order, "post_office", documentDialog.action, {
+      sender: {
+        name: documentDialog.senderName,
+        phone: documentDialog.senderPhone,
+        address: documentDialog.senderAddress,
+      },
+      receiver: {
+        name: documentDialog.receiverName,
+        phone: documentDialog.receiverPhone,
+        address: documentDialog.receiverAddress,
+      },
+    });
+
+    setDocumentDialog({
+      open: false,
+      action: "print",
+      orderId: "",
+      senderName: "",
+      senderPhone: "",
+      senderAddress: "",
+      receiverName: "",
+      receiverPhone: "",
+      receiverAddress: "",
+    });
+  };
+
   const statusDialogLabels: Record<string, { title: string; icon: React.ElementType; description: string }> = {
     processing: { title: "Start Processing", icon: Clock, description: "Mark this order as being processed. Add a message for the tracking timeline." },
     shipped: { title: "Mark as Shipped", icon: Truck, description: "Confirm shipment. You can add a tracking number and message." },
@@ -674,6 +1266,35 @@ export default function Orders() {
 
   const currentStatusLabel = statusDialogLabels[statusDialog.targetStatus] || statusDialogLabels.processing;
   const StatusIcon = currentStatusLabel.icon;
+  const renderDocumentMenu = (order: Order, compact = false) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className={`rounded-lg ${compact ? "text-xs h-8 px-2.5" : ""}`}
+        >
+          <Receipt className="h-3.5 w-3.5 mr-1.5" /> Docs
+          <ChevronDown className="h-3.5 w-3.5 ml-1" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => handleStandardDocument(order.id, "print")}>
+          <Receipt className="h-4 w-4 mr-2" /> Print Invoice / AWB
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => handleStandardDocument(order.id, "download")}>
+          <Download className="h-4 w-4 mr-2" /> Download Invoice / AWB
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => openPostOfficeDocumentDialog(order.id, "print")}>
+          <Truck className="h-4 w-4 mr-2" /> Post Office Print
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => openPostOfficeDocumentDialog(order.id, "download")}>
+          <FileText className="h-4 w-4 mr-2" /> Post Office Download
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   // Detail view
   if (selectedOrder) {
@@ -703,6 +1324,7 @@ export default function Orders() {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
+            {renderDocumentMenu(selectedOrder)}
             {selectedOrder.payment === "Unpaid" && (
               <Button variant="outline" size="sm" className="rounded-lg" onClick={() => openPaymentDialog(selectedOrder.id)}>
                 <Banknote className="h-4 w-4 mr-1.5" /> Mark Paid
@@ -1170,6 +1792,101 @@ export default function Orders() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={documentDialog.open} onOpenChange={(open) => !open && setDocumentDialog((state) => ({ ...state, open: false }))}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Truck className="h-5 w-5 text-primary" />
+                Post Office Document
+              </DialogTitle>
+              <DialogDescription>
+                Fill in sender and delivery details for the post office print/download layout.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2 max-h-[70vh] overflow-y-auto">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Sender Name <span className="text-destructive">*</span></Label>
+                  <Input
+                    value={documentDialog.senderName}
+                    onChange={(e) => setDocumentDialog((state) => ({ ...state, senderName: e.target.value }))}
+                    placeholder="Shop or sender name"
+                    className="rounded-lg"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Sender Phone</Label>
+                  <Input
+                    value={documentDialog.senderPhone}
+                    onChange={(e) => setDocumentDialog((state) => ({ ...state, senderPhone: e.target.value }))}
+                    placeholder="Phone number"
+                    className="rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm">Sender Address <span className="text-destructive">*</span></Label>
+                <Textarea
+                  value={documentDialog.senderAddress}
+                  onChange={(e) => setDocumentDialog((state) => ({ ...state, senderAddress: e.target.value }))}
+                  placeholder="Full sender address"
+                  className="rounded-lg min-h-[90px] resize-none"
+                />
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Delivery Name <span className="text-destructive">*</span></Label>
+                  <Input
+                    value={documentDialog.receiverName}
+                    onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverName: e.target.value }))}
+                    placeholder="Receiver name"
+                    className="rounded-lg"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Delivery Phone</Label>
+                  <Input
+                    value={documentDialog.receiverPhone}
+                    onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverPhone: e.target.value }))}
+                    placeholder="Receiver phone"
+                    className="rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-sm">Delivery Address <span className="text-destructive">*</span></Label>
+                <Textarea
+                  value={documentDialog.receiverAddress}
+                  onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverAddress: e.target.value }))}
+                  placeholder="Full delivery address"
+                  className="rounded-lg min-h-[100px] resize-none"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" className="rounded-lg" onClick={() => setDocumentDialog((state) => ({ ...state, open: false }))}>
+                Cancel
+              </Button>
+              <Button className="rounded-lg" onClick={submitPostOfficeDocument}>
+                {documentDialog.action === "print" ? (
+                  <>
+                    <Receipt className="h-4 w-4 mr-1.5" /> Print Post Office Copy
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4 mr-1.5" /> Download Post Office Copy
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Return / Refund Dialog */}
         <Dialog open={refundDialog.open} onOpenChange={(open) => !open && setRefundDialog(s => ({ ...s, open: false }))}>
           <DialogContent className="sm:max-w-lg">
@@ -1463,6 +2180,7 @@ export default function Orders() {
                 </div>
               </div>
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                {renderDocumentMenu(order, true)}
                 {order.payment === "Unpaid" && (
                   <Button size="sm" variant="outline" className="rounded-lg text-xs h-8" onClick={() => openPaymentDialog(order.id)}>
                     <Banknote className="h-3.5 w-3.5 mr-1" /> Pay
