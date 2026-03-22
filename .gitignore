@@ -32,6 +32,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!client/seller-side/src/lib/
+!client/seller-side/src/lib/receiptUtils.ts
 lib64/
 parts/
 sdist/

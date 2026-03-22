@@ -21,6 +21,8 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
+import { ReceiptDialog } from "@/components/ReceiptDialog";
+import type { ReceiptOrder } from "@/lib/receiptUtils";
 import { toast } from "sonner";
 import { useOrders, useUpdateOrderStatus } from "@/hooks/useOrders";
 import { useShop } from "@/context/ShopContext";
@@ -836,6 +838,8 @@ export default function Orders() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<ReceiptOrder | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [trackingMessage, setTrackingMessage] = useState("");
   const [trackingStatus, setTrackingStatus] = useState<Order["status"] | "Note">("Note");
@@ -1130,6 +1134,26 @@ export default function Orders() {
     toast.success("Copied to clipboard");
   };
 
+  const openReceipt = (order: Order) => {
+    setReceiptOrder({
+      id: order.id,
+      apiId: order.apiId,
+      customer: order.customer,
+      email: order.email,
+      phone: order.phone,
+      items: order.items,
+      amount: order.amount,
+      status: order.status,
+      payment: order.payment,
+      paymentMethod: order.paymentMethod,
+      date: order.date,
+      address: order.address,
+      trackingNumber: order.trackingNumber,
+      notes: order.notes,
+    });
+    setReceiptOpen(true);
+  };
+
   const createDocumentFileName = (orderId: string, variant: DocumentVariant) =>
     `${orderId}-${variant === "post_office" ? "post-office-awb" : "invoice-awb"}.html`;
 
@@ -1267,33 +1291,17 @@ export default function Orders() {
   const currentStatusLabel = statusDialogLabels[statusDialog.targetStatus] || statusDialogLabels.processing;
   const StatusIcon = currentStatusLabel.icon;
   const renderDocumentMenu = (order: Order, compact = false) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className={`rounded-lg ${compact ? "text-xs h-8 px-2.5" : ""}`}
-        >
-          <Receipt className="h-3.5 w-3.5 mr-1.5" /> Docs
-          <ChevronDown className="h-3.5 w-3.5 ml-1" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => handleStandardDocument(order.id, "print")}>
-          <Receipt className="h-4 w-4 mr-2" /> Print Invoice / AWB
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleStandardDocument(order.id, "download")}>
-          <Download className="h-4 w-4 mr-2" /> Download Invoice / AWB
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => openPostOfficeDocumentDialog(order.id, "print")}>
-          <Truck className="h-4 w-4 mr-2" /> Post Office Print
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => openPostOfficeDocumentDialog(order.id, "download")}>
-          <FileText className="h-4 w-4 mr-2" /> Post Office Download
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <Button
+      size="sm"
+      variant="outline"
+      className={`rounded-lg ${compact ? "h-8 px-2.5 text-xs" : ""}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        openReceipt(order);
+      }}
+    >
+      <Receipt className="mr-1.5 h-3.5 w-3.5" /> Docs
+    </Button>
   );
 
   // Detail view
@@ -1792,100 +1800,13 @@ export default function Orders() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={documentDialog.open} onOpenChange={(open) => !open && setDocumentDialog((state) => ({ ...state, open: false }))}>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5 text-primary" />
-                Post Office Document
-              </DialogTitle>
-              <DialogDescription>
-                Fill in sender and delivery details for the post office print/download layout.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-2 max-h-[70vh] overflow-y-auto">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label className="text-sm">Sender Name <span className="text-destructive">*</span></Label>
-                  <Input
-                    value={documentDialog.senderName}
-                    onChange={(e) => setDocumentDialog((state) => ({ ...state, senderName: e.target.value }))}
-                    placeholder="Shop or sender name"
-                    className="rounded-lg"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-sm">Sender Phone</Label>
-                  <Input
-                    value={documentDialog.senderPhone}
-                    onChange={(e) => setDocumentDialog((state) => ({ ...state, senderPhone: e.target.value }))}
-                    placeholder="Phone number"
-                    className="rounded-lg"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-sm">Sender Address <span className="text-destructive">*</span></Label>
-                <Textarea
-                  value={documentDialog.senderAddress}
-                  onChange={(e) => setDocumentDialog((state) => ({ ...state, senderAddress: e.target.value }))}
-                  placeholder="Full sender address"
-                  className="rounded-lg min-h-[90px] resize-none"
-                />
-              </div>
-
-              <Separator />
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label className="text-sm">Delivery Name <span className="text-destructive">*</span></Label>
-                  <Input
-                    value={documentDialog.receiverName}
-                    onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverName: e.target.value }))}
-                    placeholder="Receiver name"
-                    className="rounded-lg"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-sm">Delivery Phone</Label>
-                  <Input
-                    value={documentDialog.receiverPhone}
-                    onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverPhone: e.target.value }))}
-                    placeholder="Receiver phone"
-                    className="rounded-lg"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-sm">Delivery Address <span className="text-destructive">*</span></Label>
-                <Textarea
-                  value={documentDialog.receiverAddress}
-                  onChange={(e) => setDocumentDialog((state) => ({ ...state, receiverAddress: e.target.value }))}
-                  placeholder="Full delivery address"
-                  className="rounded-lg min-h-[100px] resize-none"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" className="rounded-lg" onClick={() => setDocumentDialog((state) => ({ ...state, open: false }))}>
-                Cancel
-              </Button>
-              <Button className="rounded-lg" onClick={submitPostOfficeDocument}>
-                {documentDialog.action === "print" ? (
-                  <>
-                    <Receipt className="h-4 w-4 mr-1.5" /> Print Post Office Copy
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4 mr-1.5" /> Download Post Office Copy
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ReceiptDialog
+          open={receiptOpen}
+          onClose={() => setReceiptOpen(false)}
+          order={receiptOrder}
+          shopName={currentShop?.name || "Flypick"}
+          shopId={selectedShopId}
+        />
 
         {/* Return / Refund Dialog */}
         <Dialog open={refundDialog.open} onOpenChange={(open) => !open && setRefundDialog(s => ({ ...s, open: false }))}>
