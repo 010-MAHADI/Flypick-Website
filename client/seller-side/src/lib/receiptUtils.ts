@@ -53,12 +53,6 @@ function shell(title: string, css: string, body: string) {
 </head>
 <body>
   ${body}
-  <script>
-    window.addEventListener("load", function () {
-      window.focus();
-      setTimeout(function () { window.print(); }, 250);
-    });
-  </script>
 </body>
 </html>`;
 }
@@ -334,14 +328,49 @@ export function buildPackingSlip(order: ReceiptOrder, shopName: string) {
 }
 
 export function openDocWindow(html: string) {
-  const nextWindow = window.open("", "_blank", "noopener,noreferrer,width=1100,height=800");
-  if (!nextWindow) {
-    window.alert("Popup was blocked. Please allow popups for this site.");
-    return;
-  }
-  nextWindow.document.open();
-  nextWindow.document.write(html);
-  nextWindow.document.close();
+  const objectUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  const iframe = document.createElement("iframe");
+
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+
+  const cleanup = () => {
+    window.setTimeout(() => {
+      iframe.remove();
+      URL.revokeObjectURL(objectUrl);
+    }, 1000);
+  };
+
+  iframe.onload = () => {
+    const frameWindow = iframe.contentWindow;
+    if (!frameWindow) {
+      cleanup();
+      window.alert("Print preview could not be opened.");
+      return;
+    }
+
+    const handleAfterPrint = () => {
+      frameWindow.removeEventListener("afterprint", handleAfterPrint);
+      cleanup();
+    };
+
+    frameWindow.addEventListener("afterprint", handleAfterPrint);
+    frameWindow.focus();
+    window.setTimeout(() => {
+      frameWindow.print();
+      window.setTimeout(cleanup, 15000);
+    }, 250);
+  };
+
+  iframe.src = objectUrl;
+  document.body.appendChild(iframe);
 }
 
 export function downloadDoc(html: string, filename: string) {
