@@ -70,6 +70,7 @@ interface Order {
   phone: string;
   items: OrderItem[];
   amount: number;
+  subtotal?: number;
   shippingCost?: number;
   discount?: number;
   status: "pending" | "processing" | "shipped" | "delivered" | "cancelled";
@@ -331,6 +332,10 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
+const roundMoney = (amount: number) => Math.round((Number.isFinite(amount) ? amount : 0) * 100) / 100;
+const toCents = (amount: number) => Math.max(0, Math.round((Number.isFinite(amount) ? amount : 0) * 100));
+const fromCents = (amount: number) => amount / 100;
+
 function cleanField(value?: string | null) {
   const trimmed = (value || "").trim();
   return trimmed && trimmed !== "-" ? trimmed : "";
@@ -366,13 +371,79 @@ function formatStatusLabel(value: string) {
     .join(" ");
 }
 
-function getOrderSubtotal(order: Order) {
+function getRawOrderSubtotal(order: Pick<Order, "items" | "subtotal">) {
+  if (typeof order.subtotal === "number" && Number.isFinite(order.subtotal)) {
+    return Math.max(order.subtotal, 0);
+  }
+
   return order.items.reduce((sum, item) => sum + item.price * item.qty, 0);
 }
 
+function getRawOrderShipping(order: Pick<Order, "amount" | "subtotal" | "shippingCost" | "items">) {
+  if (typeof order.shippingCost === "number" && Number.isFinite(order.shippingCost)) {
+    return Math.max(order.shippingCost, 0);
+  }
+
+  return Math.max(order.amount - getRawOrderSubtotal(order), 0);
+}
+
+function getDisplayedOrderPricing(order: Pick<Order, "items" | "amount" | "subtotal" | "shippingCost" | "discount">) {
+  const rawSubtotal = getRawOrderSubtotal(order);
+  const rawShipping = getRawOrderShipping(order);
+  const rawDiscount = Math.max(order.discount || 0, 0);
+  const shippingDiscount = rawShipping > 0 && Math.abs(rawDiscount - rawShipping) < 0.01 ? rawDiscount : 0;
+  const itemDiscount = Math.max(Math.min(rawDiscount - shippingDiscount, rawSubtotal), 0);
+  const subtotalCents = toCents(rawSubtotal);
+  const discountCents = Math.min(toCents(itemDiscount), subtotalCents);
+  const rawLineCents = order.items.map((item) => toCents(item.price * item.qty));
+
+  let allocatedCents = rawLineCents.map(() => 0);
+  if (discountCents > 0 && subtotalCents > 0) {
+    allocatedCents = rawLineCents.map((lineCents) => Math.floor((discountCents * lineCents) / subtotalCents));
+    let remainder = discountCents - allocatedCents.reduce((sum, value) => sum + value, 0);
+    const allocationOrder = rawLineCents
+      .map((lineCents, index) => ({
+        index,
+        remainder: ((discountCents * lineCents) % subtotalCents),
+      }))
+      .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+
+    for (const entry of allocationOrder) {
+      if (remainder <= 0) {
+        break;
+      }
+      if (rawLineCents[entry.index] <= allocatedCents[entry.index]) {
+        continue;
+      }
+      allocatedCents[entry.index] += 1;
+      remainder -= 1;
+    }
+  }
+
+  const items = order.items.map((item, index) => {
+    const netLineTotal = Math.max(rawLineCents[index] - allocatedCents[index], 0);
+    const unitPrice = item.qty > 0 ? roundMoney(fromCents(netLineTotal) / item.qty) : 0;
+
+    return {
+      ...item,
+      displayUnitPrice: unitPrice,
+      displayLineTotal: fromCents(netLineTotal),
+    };
+  });
+
+  return {
+    items,
+    subtotal: roundMoney(items.reduce((sum, item) => sum + item.displayLineTotal, 0)),
+    shipping: roundMoney(Math.max(rawShipping - shippingDiscount, 0)),
+  };
+}
+
+function getOrderSubtotal(order: Order) {
+  return getDisplayedOrderPricing(order).subtotal;
+}
+
 function getOrderShipping(order: Order) {
-  const subtotal = getOrderSubtotal(order);
-  return Math.max(order.amount - subtotal, 0);
+  return getDisplayedOrderPricing(order).shipping;
 }
 
 function formatAddressBlock(lines: string[]) {
@@ -815,6 +886,7 @@ export default function Orders() {
             imageUrl: item.product_image_url || undefined,
           })),
           amount: o.total || 0,
+          subtotal: o.subtotal || 0,
           shippingCost: o.shipping_cost || 0,
           discount: o.discount || 0,
           status: o.status,
@@ -1173,15 +1245,23 @@ export default function Orders() {
   };
 
   const openReceipt = (order: Order) => {
+    const pricing = getDisplayedOrderPricing(order);
     setReceiptOrder({
       id: order.id,
       apiId: order.apiId,
       customer: order.customer,
       email: order.email,
       phone: order.phone,
-      items: order.items,
+      items: pricing.items.map((item) => ({
+        name: item.name,
+        sku: item.sku,
+        qty: item.qty,
+        price: item.displayUnitPrice,
+        imageUrl: item.imageUrl,
+      })),
       amount: order.amount,
-      shippingCost: order.shippingCost,
+      subtotal: pricing.subtotal,
+      shippingCost: pricing.shipping,
       discount: order.discount,
       status: order.status,
       payment: order.payment,
@@ -1348,6 +1428,7 @@ export default function Orders() {
   if (selectedOrder) {
     const timeline = getTimeline(selectedOrder);
     const orderForRefund = orders.find(o => o.id === selectedOrder.id) || selectedOrder;
+    const selectedOrderPricing = getDisplayedOrderPricing(selectedOrder);
 
     return (
       <div className="space-y-6 animate-fade-in">
@@ -1412,7 +1493,7 @@ export default function Orders() {
                 <Badge variant="secondary" className="font-mono text-xs">{selectedOrder.items.length} item{selectedOrder.items.length > 1 ? "s" : ""}</Badge>
               </div>
               <div className="space-y-3">
-                {selectedOrder.items.map((item, i) => (
+                {selectedOrderPricing.items.map((item, i) => (
                   <div key={i} className="flex items-center gap-4 p-4 rounded-xl bg-muted/30 border border-border/40 hover:border-primary/20 transition-colors">
                     <div className="h-14 w-14 rounded-xl bg-muted/50 overflow-hidden shrink-0">
                       {item.imageUrl ? (
@@ -1431,19 +1512,19 @@ export default function Orders() {
                     </div>
                     <div className="text-center px-3">
                       <p className="text-xs text-muted-foreground">Unit Price</p>
-                      <p className="font-semibold text-sm">${item.price.toFixed(2)}</p>
+                      <p className="font-semibold text-sm">${item.displayUnitPrice.toFixed(2)}</p>
                     </div>
                     <div className="text-right min-w-[80px]">
                       <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="font-bold text-sm">${(item.price * item.qty).toFixed(2)}</p>
+                      <p className="font-bold text-sm">${item.displayLineTotal.toFixed(2)}</p>
                     </div>
                   </div>
                 ))}
               </div>
               <Separator className="my-2" />
               <div className="space-y-2.5 text-sm max-w-xs ml-auto">
-                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="font-medium">${(selectedOrder.amount - (selectedOrder.amount * 0.05)).toFixed(2)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="font-medium">${(selectedOrder.amount * 0.05).toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="font-medium">${selectedOrderPricing.subtotal.toFixed(2)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="font-medium">${selectedOrderPricing.shipping.toFixed(2)}</span></div>
                 <Separator />
                 <div className="flex justify-between font-bold text-base pt-1"><span>Total</span><span className="text-primary">${selectedOrder.amount.toFixed(2)}</span></div>
               </div>
