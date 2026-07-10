@@ -1,48 +1,84 @@
-import { ChevronRight } from "lucide-react";
+import { ArrowRight, Truck, ShieldCheck, RotateCcw, BadgeCheck } from "lucide-react";
 import { Link } from "react-router-dom";
-import TakaSign from "@/components/TakaSign";
+import { useProducts } from "@/hooks/useProducts";
+
+const TRUST_ITEMS = [
+  { icon: Truck, label: "Fast Delivery", sub: "All over Bangladesh" },
+  { icon: BadgeCheck, label: "100% Authentic", sub: "Quality guaranteed" },
+  { icon: RotateCcw, label: "Easy Returns", sub: "7-day return policy" },
+  { icon: ShieldCheck, label: "Secure Payment", sub: "bKash · Nagad · Cards" },
+];
 
 const HeroBanner = () => {
-  return (
-    <section className="hero-banner py-3 md:py-6 px-4">
-      <div className="max-w-[1440px] mx-auto">
-        <p className="text-xs md:text-sm font-medium text-foreground/80 mb-1">
-          Sale Ends: Mar 8, 13:59 (GMT+6)
-        </p>
-        <Link to="/super-deals" className="flex items-center gap-1.5 md:gap-2 mb-3 md:mb-5 group w-fit">
-          <h2 className="text-2xl md:text-5xl font-black text-foreground">UP TO</h2>
-          <span className="text-2xl md:text-5xl font-black text-primary">60%</span>
-          <h2 className="text-2xl md:text-5xl font-black text-foreground">OFF</h2>
-          <ChevronRight className="w-5 h-5 md:w-8 md:h-8 text-foreground/60 ml-1 group-hover:translate-x-1 transition-transform" />
-        </Link>
+  const { data: products = [] } = useProducts();
+  // Showcase the deepest-discounted products inside the hero
+  const heroPicks = [...products]
+    .filter((p) => p.discount > 0)
+    .sort((a, b) => b.discount - a.discount)
+    .slice(0, 3);
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-          {/* Coupon cards */}
-          <div className="bg-card rounded-lg p-3 md:p-4 border border-border">
-            <p className="text-primary font-bold text-xs md:text-sm"><TakaSign />2,445.44 OFF</p>
-            <p className="text-xs text-muted-foreground">orders <TakaSign />19,441.23+</p>
-            <p className="text-primary text-xs font-semibold mt-1 md:mt-2">Code:CD1592</p>
+  return (
+    <section className="section-shell pt-3 sm:pt-5">
+      {/* Promo banner */}
+      <div className="hero-banner relative overflow-hidden rounded-2xl sm:rounded-3xl text-white">
+        <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-white/10" />
+        <div className="absolute -right-4 top-24 w-32 h-32 rounded-full bg-white/10" />
+
+        <div className="relative flex items-center gap-4 px-5 py-6 sm:px-10 sm:py-10">
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] sm:text-sm font-bold uppercase tracking-[0.18em] text-white/80 mb-1.5">
+              Mega Sale · Limited time
+            </p>
+            <h1 className="text-2xl sm:text-5xl font-black leading-tight mb-1 sm:mb-2">
+              Up to <span className="text-yellow-300">60% off</span>
+            </h1>
+            <p className="text-xs sm:text-base text-white/85 mb-4 sm:mb-6 max-w-md">
+              Top tech, gadgets and everyday essentials — delivered to your door.
+            </p>
+            <Link
+              to="/super-deals"
+              className="inline-flex items-center gap-1.5 bg-white text-primary text-xs sm:text-sm font-extrabold px-4 sm:px-6 py-2.5 sm:py-3 rounded-full shadow-lg active:scale-95 hover:gap-2.5 transition-all"
+            >
+              Shop the sale <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
-          <div className="bg-card rounded-lg p-3 md:p-4 border border-border">
-            <p className="text-primary font-bold text-xs md:text-sm"><TakaSign />244.54 OFF</p>
-            <p className="text-xs text-muted-foreground">orders <TakaSign />1,834.08+</p>
-            <p className="text-primary text-xs font-semibold mt-1 md:mt-2">Code:CD1502</p>
-          </div>
-          <Link to="/super-deals" className="bg-card rounded-lg p-3 md:p-4 border border-border flex items-center gap-2 md:gap-3 hover:border-primary/30 transition-colors">
-            <span className="text-xl md:text-2xl">🔧</span>
-            <div>
-              <p className="font-bold text-xs md:text-sm">Top deals</p>
-              <p className="text-[10px] md:text-xs font-semibold bg-foreground text-card px-2 py-0.5 rounded mt-1 inline-block"><TakaSign /> 2,505.35</p>
+
+          {/* Floating product picks */}
+          {heroPicks.length > 0 && (
+            <div className="flex items-center gap-2 sm:gap-3">
+              {heroPicks.map((p, i) => (
+                <Link
+                  key={p.id}
+                  to="/super-deals"
+                  className={`relative rounded-xl sm:rounded-2xl overflow-hidden bg-white shadow-xl flex-shrink-0 ${
+                    i === 0 ? "w-20 h-20 sm:w-36 sm:h-36" : "w-14 h-14 sm:w-28 sm:h-28 hidden md:block"
+                  }`}
+                >
+                  <img src={p.image} alt={p.title} className="w-full h-full object-cover" loading="lazy" />
+                  <span className="absolute bottom-0 left-0 right-0 bg-primary/95 text-[9px] sm:text-[11px] font-extrabold text-center py-0.5">
+                    -{p.discount}%
+                  </span>
+                </Link>
+              ))}
             </div>
-          </Link>
-          <Link to="/bundle-deals" className="bg-card rounded-lg p-3 md:p-4 border border-border flex items-center gap-2 md:gap-3 hover:border-primary/30 transition-colors">
-            <span className="text-xl md:text-2xl">💡</span>
-            <div>
-              <p className="font-bold text-xs md:text-sm">Tech lab</p>
-              <p className="text-[10px] md:text-xs font-semibold bg-foreground text-card px-2 py-0.5 rounded mt-1 inline-block"><TakaSign /> 684.48</p>
-            </div>
-          </Link>
+          )}
         </div>
+      </div>
+
+      {/* Trust strip */}
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-3 mt-2.5 sm:mt-4">
+        {TRUST_ITEMS.map((item) => (
+          <div
+            key={item.label}
+            className="bg-card rounded-xl sm:rounded-2xl px-1.5 py-2.5 sm:px-4 sm:py-3.5 flex flex-col sm:flex-row items-center sm:gap-3 gap-1 text-center sm:text-left shadow-[0_1px_3px_rgba(16,24,40,0.06)]"
+          >
+            <item.icon className="w-4 h-4 sm:w-6 sm:h-6 text-primary flex-shrink-0" strokeWidth={1.9} />
+            <div className="min-w-0">
+              <p className="text-[10px] sm:text-[13px] font-bold text-foreground leading-tight">{item.label}</p>
+              <p className="hidden sm:block text-[11px] text-muted-foreground truncate">{item.sub}</p>
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );

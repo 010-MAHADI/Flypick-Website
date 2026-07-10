@@ -275,9 +275,37 @@ const Checkout = () => {
         })),
       };
 
+      // UddoktaPay — use the dedicated initiate endpoint which returns a payment_url
+      const isOnlinePayment = paymentMethod === 'uddoktapay';
+      const endpoint = isOnlinePayment ? '/orders/payments/initiate/' : '/orders/orders/';
+
+      // For UddoktaPay, pass the current frontend origin so the backend builds
+      // the correct redirect/cancel URLs regardless of which port Vite picked.
+      const extraFields = isOnlinePayment
+        ? { frontend_url: window.location.origin }
+        : {};
+
       // Create order via API
-      const response = await api.post('/orders/orders/', orderData);
-      const createdOrder = response.data;
+      const response = await api.post(endpoint, { ...orderData, ...extraFields });
+      const responseData = response.data;
+
+      if (isOnlinePayment && responseData.requires_redirect && responseData.payment_url) {
+        // Clear cart before redirecting so it doesn't persist after return
+        if (isBuyNow) {
+          setBuyNowItem(null);
+        } else {
+          for (const item of selectedItems) {
+            if (item.id) {
+              await removeFromCart(item.id);
+            }
+          }
+        }
+        // Redirect browser to UddoktaPay hosted payment page
+        window.location.href = responseData.payment_url;
+        return;
+      }
+
+      const createdOrder = responseData;
 
       toast({ 
         title: "Order placed!", 
@@ -350,7 +378,7 @@ const Checkout = () => {
     { value: "cod", label: "Cash on Delivery", desc: "Pay when you receive", enabled: paymentMethods?.cash_on_delivery ?? false },
     { value: "bkash", label: "bKash", desc: "Mobile payment", enabled: paymentMethods?.bkash ?? false },
     { value: "nagad", label: "Nagad", desc: "Digital payment", enabled: paymentMethods?.nagad ?? false },
-    { value: "card", label: "Credit / Debit Card", desc: "Visa, Mastercard, etc.", enabled: paymentMethods?.credit_card ?? false },
+    { value: "uddoktapay", label: "Online Payment", desc: "Card / bKash / Nagad via UddoktaPay (secure gateway)", enabled: paymentMethods?.credit_card ?? false },
   ].filter(method => method.enabled);
 
   console.log('Available payment methods:', availablePaymentMethods);
@@ -431,7 +459,7 @@ const Checkout = () => {
                   <div className="grid sm:grid-cols-2 gap-3">
                     <div>
                       <Label className="text-xs text-muted-foreground mb-1">Full Name *</Label>
-                      <Input value={newAddr.full_name} onChange={(e) => setNewAddr({ ...newAddr, full_name: e.target.value })} placeholder="John Doe" />
+                      <Input value={newAddr.full_name} onChange={(e) => setNewAddr({ ...newAddr, full_name: e.target.value })} placeholder="Mahadi Hasan" />
                     </div>
                     <div>
                       <Label className="text-xs text-muted-foreground mb-1">Phone Number *</Label>
@@ -627,10 +655,10 @@ const Checkout = () => {
                 {placing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Placing Order...
+                    {paymentMethod === 'uddoktapay' ? 'Redirecting to Payment…' : 'Placing Order...'}
                   </>
                 ) : (
-                  'Place Order'
+                  paymentMethod === 'uddoktapay' ? 'Proceed to Payment' : 'Place Order'
                 )}
               </button>
 

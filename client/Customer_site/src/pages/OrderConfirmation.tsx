@@ -30,6 +30,7 @@ const OrderConfirmation = () => {
     nagad: "Nagad",
     card: "Credit / Debit Card",
     credit_card: "Credit / Debit Card",
+    uddoktapay: "Online Payment (UddoktaPay)",
   };
 
   return (

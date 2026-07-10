@@ -19,7 +19,9 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { useCategories } from "@/hooks/useCategories";
 import { useShop } from "@/context/ShopContext";
+import { useAuth } from "@/context/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
+import { SourceInformation } from "@/components/SourceInformation";
 
 interface SizeStock { size: string; stock: number; }
 interface Specification { key: string; value: string; }
@@ -47,6 +49,7 @@ export default function ProductForm() {
   
   // Get current shop from context
   const { currentShop } = useShop();
+  const { isAdmin } = useAuth();
   
   // Fetch categories from API
   const { data: categoriesData = [], isLoading: categoriesLoading } = useCategories();
@@ -835,6 +838,8 @@ export default function ProductForm() {
             </div>
             <div className="space-y-2"><Label>Warranty</Label><Input value={warranty} onChange={(e) => setWarranty(e.target.value)} placeholder="e.g. 1 Year" className="rounded-lg" /></div>
           </SectionCard>
+
+          {isEditing && isAdmin && id && <SourceInformation productId={id} />}
 
           <SectionCard title="SEO">
             <div className="space-y-2">

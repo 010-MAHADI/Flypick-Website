@@ -201,3 +201,44 @@ class DashboardShopScopeTests(APITestCase):
         self.assertEqual(response.data["stats"]["activeProducts"], 1)
         self.assertEqual(response.data["stats"]["totalCustomers"], 1)
         self.assertEqual(response.data["recentOrders"][0]["product"], "Shop One Product")
+
+
+class CustomerRegistrationNameTests(APITestCase):
+    """Regression: the post_save signal creates an empty CustomerProfile,
+    which used to make get_or_create(defaults=...) silently drop the
+    first/last name submitted at registration."""
+
+    def test_register_saves_first_and_last_name(self):
+        response = self.client.post(
+            "/api/auth/customer/register/",
+            {
+                "email": "named-user@example.com",
+                "password": "supersecret1",
+                "username": "named_user_1",
+                "customer_profile": {"first_name": "Mahadi", "last_name": "Hasan"},
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+
+        user = User.objects.get(email="named-user@example.com")
+        profile = CustomerProfile.objects.get(user=user)
+        self.assertEqual(profile.first_name, "Mahadi")
+        self.assertEqual(profile.last_name, "Hasan")
+
+    def test_profile_endpoint_returns_name_after_registration(self):
+        self.client.post(
+            "/api/auth/customer/register/",
+            {
+                "email": "named2@example.com",
+                "password": "supersecret1",
+                "customer_profile": {"first_name": "Rina", "last_name": "Akter"},
+            },
+            format="json",
+        )
+        user = User.objects.get(email="named2@example.com")
+        self.client.force_authenticate(user=user)
+        response = self.client.get("/api/auth/customer/profile/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["customer_profile"]["first_name"], "Rina")
+        self.assertEqual(response.data["customer_profile"]["last_name"], "Akter")

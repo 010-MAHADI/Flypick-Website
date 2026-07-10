@@ -35,18 +35,36 @@ def create_order_notifications(sender, instance, created, **kwargs):
             new_status = instance.status
             
             if old_status != new_status:
-                notification_type = None
-                
-                if new_status == 'shipped':
-                    notification_type = 'order_shipped'
-                elif new_status == 'delivered':
-                    notification_type = 'order_delivered'
-                elif new_status == 'cancelled':
-                    notification_type = 'order_cancelled'
-                
-                if notification_type:
+                # Map every lifecycle status onto the notification types the
+                # preference system knows, with a message that matches the step.
+                status_map = {
+                    'confirmed': ('order_confirmed',
+                                  f'Your order #{instance.order_id} has been confirmed by the seller.'),
+                    'processing': ('order_confirmed',
+                                   f'Your order #{instance.order_id} is now being processed.'),
+                    'packed': ('order_confirmed',
+                               f'Your order #{instance.order_id} has been packed and is ready to ship.'),
+                    'shipped': ('order_shipped', None),
+                    'out_for_delivery': ('order_shipped',
+                                         f'Your order #{instance.order_id} is out for delivery — it arrives today!'),
+                    'delivered': ('order_delivered', None),
+                    'completed': ('order_delivered',
+                                  f'Your order #{instance.order_id} is complete. Thanks for shopping with Flypick!'),
+                    'cancelled': ('order_cancelled', None),
+                    'failed': ('order_cancelled',
+                               f'Your order #{instance.order_id} could not be fulfilled. Any payment will be refunded.'),
+                    'returned': ('order_cancelled',
+                                 f'Your return for order #{instance.order_id} has been received.'),
+                    'refunded': ('order_cancelled',
+                                 f'Your order #{instance.order_id} has been refunded.'),
+                }
+
+                mapped = status_map.get(new_status)
+                if mapped:
+                    notification_type, custom_message = mapped
                     NotificationService.create_order_notification(
                         user=instance.customer,
                         order=instance,
-                        notification_type=notification_type
+                        notification_type=notification_type,
+                        custom_message=custom_message
                     )

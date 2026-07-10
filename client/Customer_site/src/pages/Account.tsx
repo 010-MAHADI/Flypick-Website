@@ -36,6 +36,15 @@ const Account = () => {
     }
   }, [activeSection, navigate]);
 
+  // Keep the form in sync once the profile loads (fetched async after mount)
+  useEffect(() => {
+    setProfileData({
+      first_name: user?.customer_profile?.first_name || "",
+      last_name: user?.customer_profile?.last_name || "",
+      phone: user?.customer_profile?.phone || "",
+    });
+  }, [user]);
+
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -135,8 +144,8 @@ const Account = () => {
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm text-muted-foreground block mb-1">First Name</label>
-                <input 
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background" 
+                <input
+                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background"
                   placeholder="Enter first name"
                   value={profileData.first_name}
                   onChange={(e) => setProfileData({ ...profileData, first_name: e.target.value })}
@@ -144,8 +153,8 @@ const Account = () => {
               </div>
               <div>
                 <label className="text-sm text-muted-foreground block mb-1">Last Name</label>
-                <input 
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background" 
+                <input
+                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background"
                   placeholder="Enter last name"
                   value={profileData.last_name}
                   onChange={(e) => setProfileData({ ...profileData, last_name: e.target.value })}
@@ -153,8 +162,8 @@ const Account = () => {
               </div>
               <div className="sm:col-span-2">
                 <label className="text-sm text-muted-foreground block mb-1">Email</label>
-                <input 
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background" 
+                <input
+                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background"
                   placeholder="guest@flypick.com"
                   value={user?.email || ""}
                   disabled
@@ -162,15 +171,15 @@ const Account = () => {
               </div>
               <div className="sm:col-span-2">
                 <label className="text-sm text-muted-foreground block mb-1">Phone</label>
-                <input 
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background" 
+                <input
+                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-background"
                   placeholder="+880 1XXX XXXXXX"
                   value={profileData.phone}
                   onChange={(e) => setProfileData({ ...profileData, phone: e.target.value })}
                 />
               </div>
               <div className="sm:col-span-2">
-                <button 
+                <button
                   onClick={handleSaveProfile}
                   disabled={saving}
                   className="w-full sm:w-auto bg-primary text-primary-foreground font-medium px-6 py-2.5 rounded-lg hover:opacity-90 text-sm disabled:opacity-50"

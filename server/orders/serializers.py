@@ -1,8 +1,57 @@
 from rest_framework import serializers
 from django.utils import timezone
-from .models import Order, OrderItem, PaymentMethod, ReturnRequest, ReturnItem
+from .models import (
+    Order, OrderItem, OrderStatusHistory, PaymentMethod,
+    Refund, RefundEvent, ReturnRequest, ReturnItem, WalletTransaction,
+)
 from products.serializers import ProductSerializer
 from decimal import Decimal
+
+
+class OrderStatusHistorySerializer(serializers.ModelSerializer):
+    changed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderStatusHistory
+        fields = ['id', 'from_status', 'to_status', 'note', 'changed_by_name', 'created_at']
+
+    def get_changed_by_name(self, obj):
+        user = obj.changed_by
+        if not user:
+            return 'System'
+        role = getattr(user, 'role', '')
+        if role in ('Admin', 'Seller') or user.is_superuser:
+            return 'Seller' if role == 'Seller' else 'Flypick'
+        return 'You'
+
+
+class RefundEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundEvent
+        fields = ['id', 'from_status', 'to_status', 'note', 'created_at']
+
+
+class RefundSerializer(serializers.ModelSerializer):
+    order_id = serializers.CharField(source='order.order_id', read_only=True)
+    customer_name = serializers.CharField(source='order.shipping_full_name', read_only=True)
+    events = RefundEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Refund
+        fields = ['id', 'refund_id', 'order', 'order_id', 'customer_name', 'return_request',
+                  'amount', 'refund_type', 'method', 'status', 'reason',
+                  'events', 'created_at', 'updated_at']
+        read_only_fields = fields
+
+
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    order_id = serializers.CharField(source='order.order_id', read_only=True, default=None)
+    refund_id = serializers.CharField(source='refund.refund_id', read_only=True, default=None)
+
+    class Meta:
+        model = WalletTransaction
+        fields = ['id', 'amount', 'source', 'note', 'order_id', 'refund_id',
+                  'balance_after', 'created_at']
 
 class PaymentMethodSerializer(serializers.ModelSerializer):
     class Meta:
@@ -74,10 +123,15 @@ class OrderSerializer(serializers.ModelSerializer):
             'shipping_full_name', 'shipping_phone', 'shipping_street', 'shipping_city',
             'shipping_state', 'shipping_zip_code', 'shipping_country',
             'payment_method', 'payment_status',
-            'subtotal', 'shipping_cost', 'discount', 'coupon_code', 'total_amount',
-            'status', 'created_at', 'updated_at', 'items'
+            'subtotal', 'shipping_cost', 'discount', 'coupon_code',
+            'store_credit_used', 'total_amount',
+            'status', 'order_notes', 'delivery_instructions',
+            'tracking_number', 'courier_name', 'estimated_delivery_date',
+            'cancellation_reason',
+            'created_at', 'updated_at', 'items'
         ]
-        read_only_fields = ['id', 'order_id', 'customer', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'order_id', 'customer', 'store_credit_used',
+                            'cancellation_reason', 'created_at', 'updated_at']
 
     def get_customer_name(self, obj):
         """Return the full name from shipping address instead of username"""
@@ -157,9 +211,13 @@ class OrderCreateSerializer(serializers.Serializer):
     
     # Items
     items = OrderItemCreateSerializer(many=True)
-    
+
     # Optional
     coupon_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    order_notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    delivery_instructions = serializers.CharField(required=False, allow_blank=True, max_length=1000)
+    # Redeem available store credit against the order total
+    use_store_credit = serializers.BooleanField(required=False, default=False)
 
     def _get_checkout_payment_config(self):
         from django.db.models import Q
@@ -198,6 +256,8 @@ class OrderCreateSerializer(serializers.Serializer):
             'nagad': payment_config.nagad,
             'card': payment_config.credit_card,
             'credit_card': payment_config.credit_card,
+            # UddoktaPay maps to credit_card toggle in admin panel
+            'uddoktapay': payment_config.credit_card,
         }
 
         if normalized_value in method_map and not method_map[normalized_value]:
@@ -236,10 +296,18 @@ class OrderCreateSerializer(serializers.Serializer):
                     product = Product.objects.get(id=item_data['product_id'])
                 except Product.DoesNotExist:
                     raise serializers.ValidationError(f"Product with ID {item_data['product_id']} not found.")
-                
+
+                quantity = item_data['quantity']
+
+                # Stock validation — protects against overselling. Legacy
+                # products use stock=0 to mean "untracked", so only enforce
+                # when a positive stock level is being tracked.
+                if product.stock and quantity > product.stock:
+                    raise serializers.ValidationError(
+                        f'Only {product.stock} unit(s) of "{product.title[:60]}" left in stock.')
+
                 # Use originalPrice (discounted price) if available, else fall back to price
                 price = Decimal(str(product.originalPrice if product.originalPrice is not None else product.price))
-                quantity = item_data['quantity']
                 subtotal += price * quantity
                 
                 # Calculate shipping for this product
@@ -338,7 +406,15 @@ class OrderCreateSerializer(serializers.Serializer):
                     pass
             
             total_amount = max(Decimal('0'), subtotal + shipping_cost - discount)
-            
+
+            # Redeem store credit against the remaining total when requested
+            from .lifecycle import wallet_balance, debit_wallet, record_status
+            store_credit_used = Decimal('0')
+            if validated_data.get('use_store_credit'):
+                balance = wallet_balance(customer)
+                store_credit_used = min(balance, total_amount)
+                total_amount -= store_credit_used
+
             # Create order
             order = Order.objects.create(
                 customer=customer,
@@ -356,29 +432,44 @@ class OrderCreateSerializer(serializers.Serializer):
                 shipping_cost=shipping_cost,
                 discount=discount,
                 coupon_code=coupon_code if discount > 0 else None,
+                store_credit_used=store_credit_used,
                 total_amount=total_amount,
                 status='pending',
+                order_notes=validated_data.get('order_notes', '') or None,
+                delivery_instructions=validated_data.get('delivery_instructions', '') or None,
             )
-            
-            # Create order items and update product sold_count
+
+            # Charge the redeemed store credit and open the audit trail
+            if store_credit_used > 0:
+                debit_wallet(customer, store_credit_used, source='order',
+                             note=f'Used on order {order.order_id}', order=order)
+            record_status(order, '', 'pending', actor=customer, note='Order placed')
+
+            # Create order items, reserve stock and update sold counters
             for item_data in order_items:
                 OrderItem.objects.create(order=order, **item_data)
-                
-                # Update product sold_count
+
                 try:
                     product = item_data['product']
                     product.sold_count += item_data['quantity']
-                    product.save(update_fields=['sold_count'])
+                    update_fields = ['sold_count']
+                    if product.stock is not None and product.stock > 0:
+                        product.stock = max(0, product.stock - item_data['quantity'])
+                        update_fields.append('stock')
+                    product.save(update_fields=update_fields)
                 except Exception as e:
-                    logger.warning(f"Failed to update sold_count for product {product.id}: {e}")
-                    # Continue without updating sold_count rather than failing the order
+                    logger.warning(f"Failed to update counters for product {product.id}: {e}")
+                    # Continue without updating counters rather than failing the order
             
-            # Send email notifications
-            try:
-                self._send_order_notifications(order)
-            except Exception as e:
-                logger.error(f"Failed to send order notifications for order {order.order_id}: {e}")
-                # Continue without failing the order creation
+            # Send email notifications only for non-UddoktaPay orders.
+            # For UddoktaPay, emails are deferred until payment is confirmed via IPN
+            # so the seller never gets notified about an unpaid order.
+            if order.payment_method != 'uddoktapay':
+                try:
+                    self._send_order_notifications(order)
+                except Exception as e:
+                    logger.error(f"Failed to send order notifications for order {order.order_id}: {e}")
+                    # Continue without failing the order creation
             
             return order
             
@@ -586,14 +677,25 @@ class ReturnRequestSerializer(serializers.ModelSerializer):
     items = ReturnItemSerializer(many=True, read_only=True)
     order_id = serializers.CharField(source='order.order_id', read_only=True)
     
+    image_urls = serializers.SerializerMethodField()
+
     class Meta:
         model = ReturnRequest
         fields = [
             'id', 'return_id', 'order', 'order_id', 'reason', 'description',
-            'status', 'refund_amount', 'admin_note', 'items',
+            'status', 'refund_amount', 'admin_note', 'items', 'image_urls',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'return_id', 'created_at', 'updated_at']
+
+    def get_image_urls(self, obj):
+        from django.conf import settings as dj_settings
+        request = self.context.get('request')
+        urls = []
+        for path in obj.images or []:
+            url = f'{dj_settings.MEDIA_URL}{path}'
+            urls.append(request.build_absolute_uri(url) if request else url)
+        return urls
 
 
 class ReturnRequestCreateSerializer(serializers.Serializer):

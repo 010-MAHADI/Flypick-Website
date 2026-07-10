@@ -36,6 +36,8 @@ import ReturnRequest from "./pages/ReturnRequest";
 import WriteReview from "./pages/WriteReview";
 import LiveChatPage from "./pages/LiveChatPage";
 import LiveChat from "./components/LiveChat";
+import PaymentSuccess from "./pages/PaymentSuccess";
+import PaymentCancel from "./pages/PaymentCancel";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -83,6 +85,8 @@ const App = () => (
             <Route path="/return-request/:orderId" element={<ReturnRequest />} />
             <Route path="/write-review/:orderId/:itemId" element={<WriteReview />} />
             <Route path="/live-chat" element={<LiveChatPage />} />
+            <Route path="/payment/success" element={<PaymentSuccess />} />
+            <Route path="/payment/cancel" element={<PaymentCancel />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           <LiveChat />

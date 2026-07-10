@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "notifications",
     "promotions",
     "chat",
+    "importer",
 ]
 
 MIDDLEWARE = [
@@ -304,6 +305,10 @@ SELLER_FRONTEND_URL = os.getenv('SELLER_FRONTEND_URL', 'http://54.169.101.239:80
 SOCIAL_AUTH_FRONTEND_URL = os.getenv('SOCIAL_AUTH_FRONTEND_URL', FRONTEND_URL)
 BACKEND_PUBLIC_URL = os.getenv('BACKEND_PUBLIC_URL', FRONTEND_URL)
 
+# UddoktaPay Payment Gateway
+UDDOKTAPAY_API_KEY = os.getenv('UDDOKTAPAY_API_KEY', '')
+UDDOKTAPAY_BASE_URL = os.getenv('UDDOKTAPAY_BASE_URL', 'https://mahadi.paymently.io/api')
+
 # Social Authentication
 GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
@@ -333,6 +338,12 @@ LOGGING = {
             'filename': os.path.join(BASE_DIR, 'logs', 'email.log'),
             'formatter': 'verbose',
         },
+        'importer_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'importer.log'),
+            'formatter': 'verbose',
+        },
         'console': {
             'level': 'DEBUG',
             'class': 'logging.StreamHandler',
@@ -344,6 +355,11 @@ LOGGING = {
             'handlers': ['file', 'console'],
             'level': 'INFO',
             'propagate': True,
+        },
+        'importer': {
+            'handlers': ['importer_file', 'console'],
+            'level': 'INFO',
+            'propagate': False,
         },
     },
 }

@@ -1,4 +1,5 @@
 import type { Product } from "@/hooks/useProducts";
+import { looksLikeHtml, sanitizeHtml } from "@/lib/safeHtml";
 
 interface Props {
   product: Product;
@@ -25,7 +26,15 @@ const ProductDescription = ({ product }: Props) => {
               <p className="font-medium text-base">{product.short_description}</p>
             )}
             {product.description && (
-              <div className="whitespace-pre-wrap">{product.description}</div>
+              looksLikeHtml(product.description) ? (
+                // imported descriptions arrive as sanitized HTML — render it
+                <div
+                  className="product-description-html [&_h1]:text-lg [&_h1]:font-bold [&_h2]:text-base [&_h2]:font-bold [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-1 [&_p]:my-2 [&_table]:w-full [&_table]:border [&_table]:border-border [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_img]:max-w-full [&_img]:rounded-lg [&_a]:text-primary [&_a]:underline"
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(product.description) }}
+                />
+              ) : (
+                <div className="whitespace-pre-wrap">{product.description}</div>
+              )
             )}
           </div>
         </>

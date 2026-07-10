@@ -18,45 +18,59 @@ const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1523275335684-37898b6b
 
 const CategorySection = () => {
   const { data: categories = [], isLoading } = useQuery({
-    queryKey: ['categories'],
+    queryKey: ["categories"],
     queryFn: async (): Promise<Category[]> => {
-      const response = await api.get('/products/categories/');
+      const response = await api.get("/products/categories/");
       const data = response.data?.results ?? response.data;
       return Array.isArray(data) ? data.filter((cat: Category) => cat.is_active) : [];
     },
   });
 
-  // Sort by sort_order and limit to 12
   const displayCategories = [...categories]
     .sort((a, b) => (b.sort_order || 0) - (a.sort_order || 0))
     .slice(0, 12);
 
+  if (!isLoading && displayCategories.length === 0) return null;
+
   return (
-    <section className="max-w-[1440px] mx-auto px-4 py-8">
-      <h2 className="section-title mb-6">Shop by Category</h2>
+    <section className="section-shell py-4 sm:py-8">
+      <div className="section-head">
+        <h2 className="section-title">Categories</h2>
+        <Link to="/search?q=" className="section-link">
+          View all ›
+        </Link>
+      </div>
+
       {isLoading ? (
-        <div className="text-center py-6 text-muted-foreground">Loading categories...</div>
-      ) : displayCategories.length === 0 ? (
-        <div className="text-center py-6 text-muted-foreground">No categories found.</div>
+        <div className="snap-rail sm:grid sm:grid-cols-6 lg:grid-cols-12 sm:gap-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex flex-col items-center gap-2 flex-shrink-0 w-[72px] sm:w-auto">
+              <div className="skeleton w-16 h-16 sm:w-20 sm:h-20 !rounded-2xl" />
+              <div className="skeleton h-2.5 w-12 !rounded-full" />
+            </div>
+          ))}
+        </div>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-12 gap-4">
+        /* Mobile: swipeable rail · Desktop: grid */
+        <div className="snap-rail sm:grid sm:grid-cols-6 lg:grid-cols-12 sm:gap-4">
           {displayCategories.map((category) => (
             <Link
               key={category.id}
               to={`/search?category=${category.id}`}
-              className="flex flex-col items-center gap-2 group"
+              className="flex flex-col items-center gap-2 group flex-shrink-0 w-[72px] sm:w-auto snap-start"
             >
-              <div className="w-16 h-16 md:w-20 md:h-20 rounded-full border-2 border-border group-hover:border-primary transition-colors bg-muted overflow-hidden">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-card shadow-[0_1px_3px_rgba(16,24,40,0.08)] group-hover:shadow-[0_6px_16px_rgba(16,24,40,0.14)] group-active:scale-95 transition-all overflow-hidden p-1.5">
                 <img
                   src={category.image_url || FALLBACK_IMAGE}
                   alt={category.name}
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                  className="w-full h-full object-cover rounded-xl group-hover:scale-105 transition-transform duration-300"
+                  loading="lazy"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = FALLBACK_IMAGE;
                   }}
                 />
               </div>
-              <span className="text-xs text-center text-muted-foreground group-hover:text-foreground font-medium leading-tight">
+              <span className="text-[11px] sm:text-xs text-center text-foreground/70 group-hover:text-primary font-semibold leading-tight line-clamp-2">
                 {category.name}
               </span>
             </Link>
@@ -68,5 +82,3 @@ const CategorySection = () => {
 };
 
 export default CategorySection;
-
-

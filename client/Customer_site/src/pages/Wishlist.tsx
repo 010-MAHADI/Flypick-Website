@@ -11,25 +11,38 @@ const Wishlist = () => {
   return (
     <div className="min-h-screen bg-background">
       <SiteHeader />
-      <main className="max-w-[1440px] mx-auto px-4 py-6 pb-20 sm:pb-6">
-        <h1 className="text-2xl font-bold mb-6">My Wishlist ({wishlist.length})</h1>
+      <main className="section-shell py-3 sm:py-6 pb-mobile-nav md:pb-10">
+        <h1 className="text-xl sm:text-2xl font-extrabold mb-3 sm:mb-5">
+          My Wishlist{" "}
+          <span className="text-muted-foreground font-semibold text-base">({wishlist.length})</span>
+        </h1>
+
         {wishlist.length === 0 ? (
-          <div className="text-center py-20">
-            <Heart className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-            <h2 className="text-xl font-bold mb-2">Your wishlist is empty</h2>
-            <p className="text-muted-foreground mb-6">Save items you love by clicking the heart icon on any product.</p>
-            <Link to="/" className="inline-block bg-primary text-primary-foreground font-bold px-8 py-3 rounded-lg hover:opacity-90">
+          <div className="text-center py-20 bg-card rounded-2xl shadow-[0_1px_3px_rgba(16,24,40,0.07)]">
+            <div className="w-20 h-20 rounded-full bg-accent flex items-center justify-center mx-auto mb-4">
+              <Heart className="w-9 h-9 text-accent-foreground" />
+            </div>
+            <h2 className="text-lg font-extrabold mb-1.5">Your wishlist is empty</h2>
+            <p className="text-sm text-muted-foreground mb-6 max-w-xs mx-auto">
+              Tap the ♥ on any product to save it here for later.
+            </p>
+            <Link
+              to="/"
+              className="inline-block bg-primary text-primary-foreground font-bold px-8 py-3 rounded-full hover:opacity-90 text-sm active:scale-[0.98] transition-all"
+            >
               Start Shopping
             </Link>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3.5">
             {wishlist.map((product) => (
-              <div key={product.id} className="relative group/wish">
+              <div key={product.id} className="relative">
                 <ProductCard product={product} />
+                {/* Always visible — hover-only actions don't work on touch screens */}
                 <button
                   onClick={() => removeFromWishlist(product.id)}
-                  className="absolute top-2 right-2 z-10 bg-destructive/90 text-destructive-foreground p-1.5 rounded-full opacity-0 group-hover/wish:opacity-100 transition-opacity"
+                  className="absolute bottom-2 right-2 z-10 w-8 h-8 rounded-full bg-card shadow-md flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 active:scale-90 transition-all"
+                  aria-label="Remove from wishlist"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>

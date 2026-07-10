@@ -4,6 +4,7 @@ import {
   CreditCard,
   FolderTree,
   Image,
+  Import,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -39,6 +40,7 @@ import { useAuth } from "@/context/AuthContext";
 const adminMainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Products", url: "/products", icon: Package },
+  { title: "Import Product", url: "/products/import", icon: Import },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
   { title: "Customers", url: "/customers", icon: Users },
   { title: "Categories", url: "/categories", icon: FolderTree },
@@ -59,6 +61,7 @@ const adminCommerceNav = [
 const sellerMainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Products", url: "/products", icon: Package },
+  { title: "Import Product", url: "/products/import", icon: Import },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Coupons", url: "/coupons", icon: Tag },

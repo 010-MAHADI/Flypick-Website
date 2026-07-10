@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Edit, Download, BarChart3, TrendingUp, TrendingDown, Eye, ShoppingCart, DollarSign, Star, X, Package } from "lucide-react";
+import { Plus, Search, Filter, Edit, Download, BarChart3, TrendingUp, TrendingDown, Eye, ShoppingCart, DollarSign, Star, X, Package, Link2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,6 +56,9 @@ export default function Products() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="rounded-lg">
             <Download className="h-4 w-4 mr-1.5" /> Export
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-lg" onClick={() => navigate("/products/import")}>
+            <Link2 className="h-4 w-4 mr-1.5" /> Import from URL
           </Button>
           <Button size="sm" className="rounded-lg shadow-sm" onClick={() => navigate("/products/new")}>
             <Plus className="h-4 w-4 mr-1.5" /> Add Product

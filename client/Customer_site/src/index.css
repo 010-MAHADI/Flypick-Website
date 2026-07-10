@@ -6,45 +6,47 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 13%;
+    /* Refined Flypick palette — warm off-white canvas, deep brand red,
+       amber accents. Cards are white and lift with shadow, not borders. */
+    --background: 30 20% 98%;
+    --foreground: 224 15% 16%;
 
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 13%;
+    --card-foreground: 224 15% 16%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 13%;
+    --popover-foreground: 224 15% 16%;
 
-    --primary: 0 79% 55%;
+    --primary: 355 78% 48%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 30 100% 50%;
+    --secondary: 28 96% 50%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
+    --muted: 220 15% 95%;
+    --muted-foreground: 224 8% 46%;
 
-    --accent: 0 0% 96%;
-    --accent-foreground: 0 0% 13%;
+    --accent: 355 80% 96%;
+    --accent-foreground: 355 78% 40%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 0 84% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 0 0% 90%;
-    --input: 0 0% 90%;
-    --ring: 0 79% 55%;
+    --border: 220 14% 90%;
+    --input: 220 14% 88%;
+    --ring: 355 78% 48%;
 
-    --radius: 0.5rem;
+    --radius: 0.875rem;
 
-    --sale: 0 79% 55%;
+    --sale: 355 78% 48%;
     --sale-foreground: 0 0% 100%;
-    --deal-bg: 350 100% 97%;
-    --star: 45 100% 51%;
-    --success: 142 71% 45%;
-    --badge-choice: 0 79% 55%;
-    --badge-sale: 30 100% 50%;
-    --free-shipping: 142 71% 45%;
-    --hero-gradient: linear-gradient(135deg, hsl(350, 100%, 93%) 0%, hsl(20, 100%, 95%) 50%, hsl(350, 100%, 90%) 100%);
+    --deal-bg: 355 80% 97%;
+    --star: 42 96% 50%;
+    --success: 152 60% 40%;
+    --badge-choice: 355 78% 48%;
+    --badge-sale: 28 96% 50%;
+    --free-shipping: 152 60% 40%;
+    --hero-gradient: linear-gradient(120deg, hsl(356 75% 46%) 0%, hsl(350 80% 40%) 55%, hsl(24 90% 45%) 130%);
 
     --sidebar-background: 0 0% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
@@ -63,64 +65,87 @@
   }
   html {
     overflow-x: hidden;
+    scroll-behavior: smooth;
   }
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply bg-background text-foreground font-sans antialiased;
     overflow-x: hidden;
   }
 }
 
 @layer components {
+  /* ------- badges & price ------- */
   .badge-choice {
-    @apply bg-primary text-primary-foreground text-xs font-bold px-1.5 py-0.5 rounded;
+    @apply bg-foreground text-background text-[10px] font-bold px-1.5 py-0.5 rounded-md tracking-wide;
   }
   .badge-sale {
-    @apply bg-secondary text-secondary-foreground text-xs font-bold px-1.5 py-0.5 rounded;
+    @apply bg-secondary text-secondary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-md tracking-wide;
+  }
+  .badge-discount {
+    @apply bg-primary text-primary-foreground text-[11px] font-extrabold px-1.5 py-0.5 rounded-md;
   }
   .badge-free-shipping {
-    @apply text-xs font-medium px-2 py-0.5 rounded;
-    background: hsl(var(--free-shipping));
-    color: hsl(var(--primary-foreground));
+    @apply text-[11px] font-semibold text-success;
   }
   .price-current {
-    @apply text-foreground font-bold;
+    @apply text-foreground font-extrabold;
   }
   .price-original {
-    @apply text-muted-foreground line-through text-sm;
+    @apply text-muted-foreground line-through text-xs font-medium;
   }
   .price-discount {
-    @apply text-primary font-semibold text-sm;
+    @apply text-primary font-bold text-xs;
   }
+
+  /* ------- cards & sections ------- */
   .product-card {
-    @apply bg-card rounded-lg overflow-hidden border border-border hover:shadow-lg transition-shadow duration-200 cursor-pointer block;
-    display: inline-block;
-    width: 100%;
+    @apply bg-card rounded-xl overflow-hidden cursor-pointer block w-full
+      shadow-[0_1px_3px_rgba(16,24,40,0.07)]
+      transition-all duration-200
+      md:hover:shadow-[0_10px_28px_rgba(16,24,40,0.13)] md:hover:-translate-y-0.5;
+  }
+  .section-shell {
+    @apply max-w-[1440px] mx-auto px-3 sm:px-4;
+  }
+  .section-head {
+    @apply flex items-end justify-between mb-3 sm:mb-5;
   }
   .section-title {
-    @apply text-2xl font-bold text-foreground text-center;
+    @apply text-lg sm:text-2xl font-extrabold tracking-tight text-foreground;
   }
-  .nav-category {
-    @apply text-sm font-medium text-foreground hover:text-primary transition-colors cursor-pointer;
+  .section-link {
+    @apply text-xs sm:text-sm font-semibold text-primary flex items-center gap-0.5 hover:gap-1.5 transition-all;
   }
-  .nav-category-active {
-    @apply text-sm font-bold text-primary;
+
+  /* ------- chips ------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card
+      px-3.5 py-1.5 text-xs font-semibold text-foreground/80 transition-colors
+      hover:border-primary/40 hover:text-primary;
   }
-  .deal-card {
-    @apply bg-card rounded-xl border border-border p-4;
+  .chip-active {
+    @apply border-primary bg-accent text-accent-foreground;
   }
+
   .hero-banner {
     background: var(--hero-gradient);
   }
-  .welcome-deal-box {
-    @apply border-2 rounded-lg p-4;
-    border-color: hsl(var(--primary) / 0.3);
+
+  /* ------- skeleton loading ------- */
+  .skeleton {
+    @apply relative overflow-hidden rounded-xl bg-muted;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+    animation: shimmer 1.4s infinite;
   }
 
-  /* Auth page styles */
+  /* Auth page styles (unchanged pages still use these) */
   .auth-gradient {
     background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.8) 50%, hsl(var(--secondary)) 100%);
   }
-
   .auth-blob {
     @apply absolute rounded-full;
     filter: blur(80px);
@@ -141,13 +166,50 @@
     background: hsl(var(--destructive));
     animation: auth-morph 12s ease-in-out infinite 2s;
   }
-
   .auth-btn-glow {
     box-shadow: 0 0 20px hsl(var(--primary) / 0.3);
   }
   .auth-btn-glow:hover {
     box-shadow: 0 0 30px hsl(var(--primary) / 0.5);
   }
+  .welcome-deal-box {
+    @apply border-2 rounded-xl p-4;
+    border-color: hsl(var(--primary) / 0.3);
+  }
+  .deal-card {
+    @apply bg-card rounded-2xl p-4 shadow-[0_1px_3px_rgba(16,24,40,0.07)];
+  }
+  .nav-category {
+    @apply text-sm font-medium text-foreground hover:text-primary transition-colors cursor-pointer;
+  }
+  .nav-category-active {
+    @apply text-sm font-bold text-primary;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbars on horizontal rails while keeping them scrollable */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Space for the fixed mobile bottom nav + iOS safe area */
+  .pb-mobile-nav {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .snap-rail {
+    @apply flex gap-2.5 overflow-x-auto no-scrollbar snap-x snap-mandatory scroll-px-3;
+  }
+}
+
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
 }
 
 @keyframes auth-morph {
@@ -192,7 +254,6 @@
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
-
 
 /* Prevent accidental zoom on images and interactive elements */
 img {

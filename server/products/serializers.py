@@ -90,6 +90,28 @@ class ProductSerializer(serializers.ModelSerializer):
             'video_gallery',
         ]
     
+    def to_representation(self, instance):
+        """Import-source details are admin/owner-only: strip them from the
+        variants JSON for everyone else (covers legacy imported products)."""
+        data = super().to_representation(instance)
+        variants = data.get('variants')
+        if isinstance(variants, dict) and isinstance(variants.get('imported'), dict):
+            request = self.context.get('request')
+            user = getattr(request, 'user', None)
+            is_privileged = bool(
+                user and user.is_authenticated
+                and (user.is_superuser or getattr(user, 'role', '') == 'Admin'
+                     or instance.shop.seller_id == user.id)
+            )
+            if not is_privileged:
+                imported = dict(variants['imported'])
+                for secret in ('source_url', 'source_site', 'image_renditions', 'slug', 'stock_status'):
+                    imported.pop(secret, None)
+                variants = dict(variants)
+                variants['imported'] = imported
+                data['variants'] = variants
+        return data
+
     def get_image_url(self, obj):
         """Return full URL for the image"""
         if obj.image:

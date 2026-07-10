@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Minus, Plus, Trash2, ShoppingCart } from "lucide-react";
+import { Minus, Plus, Trash2, ShoppingCart, ShieldCheck } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useCart } from "@/context/CartContext";
@@ -20,57 +20,45 @@ const Cart = () => {
 
     selectedItems.forEach((item) => {
       const product = item.product;
-      
-      // Check if product has free shipping
+
       if (product.freeShipping) {
-        if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-          shippingDetails.push({ method: 'Free Shipping', cost: 0, time: '7-15 business days' });
+        if (shippingDetails.length === 0 || !shippingDetails.some((s) => s.cost === 0)) {
+          shippingDetails.push({ method: "Free Shipping", cost: 0, time: "7-15 business days" });
         }
         return;
       }
 
-      // Get shipping options from product variants
       const shippingOptions = product.variants?.shippingOptions || [];
-      
+
       if (shippingOptions.length > 0) {
-        // Try to find the shipping option that was selected by the user
         let selectedOption = null;
-        
-        // Check if item has a selected shipping type
+
         if (item.shippingType) {
-          selectedOption = shippingOptions.find((opt: any) => 
-            opt.enabled && opt.type.toLowerCase() === item.shippingType.toLowerCase()
+          selectedOption = shippingOptions.find(
+            (opt: any) => opt.enabled && opt.type.toLowerCase() === item.shippingType.toLowerCase()
           );
         }
-        
-        // If no selected option or not found, use first enabled option
         if (!selectedOption) {
           selectedOption = shippingOptions.find((opt: any) => opt.enabled);
         }
-        
+
         if (selectedOption) {
           const cost = parseFloat(selectedOption.price) || 0;
           totalShipping += cost * item.quantity;
-          
-          const existingMethod = shippingDetails.find(s => s.method === selectedOption.type);
+
+          const existingMethod = shippingDetails.find((s) => s.method === selectedOption.type);
           if (!existingMethod) {
             shippingDetails.push({
               method: selectedOption.type,
               cost: cost,
-              time: `${selectedOption.estimatedDelivery || '7-15'} business days`
+              time: `${selectedOption.estimatedDelivery || "7-15"} business days`,
             });
           }
-        } else {
-          // No enabled option, assume free
-          if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-            shippingDetails.push({ method: 'Standard Shipping', cost: 0, time: '7-15 business days' });
-          }
+        } else if (shippingDetails.length === 0 || !shippingDetails.some((s) => s.cost === 0)) {
+          shippingDetails.push({ method: "Standard Shipping", cost: 0, time: "7-15 business days" });
         }
-      } else {
-        // No shipping options defined, assume free
-        if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-          shippingDetails.push({ method: 'Standard Shipping', cost: 0, time: '7-15 business days' });
-        }
+      } else if (shippingDetails.length === 0 || !shippingDetails.some((s) => s.cost === 0)) {
+        shippingDetails.push({ method: "Standard Shipping", cost: 0, time: "7-15 business days" });
       }
     });
 
@@ -84,9 +72,16 @@ const Cart = () => {
     return (
       <div className="min-h-screen bg-background">
         <SiteHeader />
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-4 py-12 sm:py-20 text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading cart...</p>
+        <div className="max-w-[980px] mx-auto px-3 sm:px-4 py-6 space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-card rounded-2xl p-4 shadow-[0_1px_3px_rgba(16,24,40,0.07)] flex gap-3">
+              <div className="skeleton w-20 h-20" />
+              <div className="flex-1 space-y-2 pt-1">
+                <div className="skeleton h-3.5 w-3/4 !rounded-full" />
+                <div className="skeleton h-3.5 w-1/2 !rounded-full" />
+              </div>
+            </div>
+          ))}
         </div>
         <SiteFooter />
       </div>
@@ -97,11 +92,16 @@ const Cart = () => {
     return (
       <div className="min-h-screen bg-background">
         <SiteHeader />
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-4 py-12 sm:py-20 text-center">
-          <ShoppingCart className="w-12 h-12 sm:w-16 sm:h-16 text-muted-foreground mx-auto mb-3 sm:mb-4" />
-          <h2 className="text-lg sm:text-xl font-bold mb-2">Your cart is empty</h2>
-          <p className="text-sm text-muted-foreground mb-5 sm:mb-6">Looks like you haven't added anything yet.</p>
-          <Link to="/" className="inline-block bg-primary text-primary-foreground font-bold px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg hover:opacity-90 text-sm sm:text-base">
+        <div className="max-w-[980px] mx-auto px-3 sm:px-4 py-16 sm:py-24 text-center">
+          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+            <ShoppingCart className="w-9 h-9 text-muted-foreground" />
+          </div>
+          <h2 className="text-lg sm:text-xl font-extrabold mb-1.5">Your cart is empty</h2>
+          <p className="text-sm text-muted-foreground mb-6">Looks like you haven't added anything yet.</p>
+          <Link
+            to="/"
+            className="inline-block bg-primary text-primary-foreground font-bold px-8 py-3 rounded-full hover:opacity-90 text-sm active:scale-[0.98] transition-all"
+          >
             Continue Shopping
           </Link>
         </div>
@@ -119,97 +119,104 @@ const Cart = () => {
   return (
     <div className="min-h-screen bg-background">
       <SiteHeader />
-      <main className="max-w-[1440px] mx-auto px-3 sm:px-4 py-4 sm:py-6 pb-32 lg:pb-6">
-        <h1 className="text-lg sm:text-2xl font-bold mb-3 sm:mb-6">
-          Shopping Cart ({items.reduce((s, i) => s + i.quantity, 0)})
+      <main className="max-w-[1100px] mx-auto px-3 sm:px-4 py-3 sm:py-6 pb-40 lg:pb-10">
+        <h1 className="text-xl sm:text-2xl font-extrabold mb-3 sm:mb-5">
+          My Cart <span className="text-muted-foreground font-semibold text-base">({items.reduce((s, i) => s + i.quantity, 0)} items)</span>
         </h1>
 
-        <div className="grid lg:grid-cols-[1fr_350px] gap-4 sm:gap-8">
-          <div>
+        <div className="grid lg:grid-cols-[1fr_340px] gap-4 sm:gap-6 items-start">
+          <div className="space-y-3">
             {/* Select all */}
-            <div className="flex items-center gap-3 mb-3 sm:mb-4 pb-3 border-b border-border">
-              <Checkbox
-                checked={allSelected}
-                onCheckedChange={(checked) => selectAll(!!checked)}
-              />
-              <span className="text-xs sm:text-sm font-medium">Select All ({items.length})</span>
+            <div className="bg-card rounded-2xl shadow-[0_1px_3px_rgba(16,24,40,0.07)] px-4 py-3 flex items-center gap-3">
+              <Checkbox checked={allSelected} onCheckedChange={(checked) => selectAll(!!checked)} id="select-all" />
+              <label htmlFor="select-all" className="text-sm font-semibold cursor-pointer">
+                Select all ({items.length})
+              </label>
             </div>
 
-            <div className="space-y-3 sm:space-y-4">
-              {items.map(({ id, product, quantity, selected, color, size }) => (
-                <div
-                  key={id || product.id}
-                  className={`border rounded-xl p-3 sm:p-4 transition-colors ${
-                    selected ? "border-primary/50 bg-primary/5" : "border-border"
-                  }`}
-                >
-                  <div className="flex gap-2.5 sm:gap-4">
-                    {/* Checkbox */}
-                    <div className="flex items-start pt-1 flex-shrink-0">
-                      <Checkbox
-                        checked={selected}
-                        onCheckedChange={() => id && toggleSelect(id)}
-                      />
-                    </div>
+            {items.map(({ id, product, quantity, selected, color, size }) => (
+              <div
+                key={id || product.id}
+                className={`bg-card rounded-2xl p-3 sm:p-4 transition-all shadow-[0_1px_3px_rgba(16,24,40,0.07)] ${
+                  selected ? "ring-2 ring-primary/40" : ""
+                }`}
+              >
+                <div className="flex gap-2.5 sm:gap-4">
+                  <div className="flex items-start pt-1 flex-shrink-0">
+                    <Checkbox checked={selected} onCheckedChange={() => id && toggleSelect(id)} />
+                  </div>
 
-                    {/* Image */}
-                    <Link to={generateProductUrl(product)} className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden flex-shrink-0 bg-muted">
-                      <img src={product.image} alt={product.title} className="w-full h-full object-cover" />
+                  <Link
+                    to={generateProductUrl(product)}
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden flex-shrink-0 bg-muted"
+                  >
+                    <img src={product.image} alt={product.title} className="w-full h-full object-cover" />
+                  </Link>
+
+                  <div className="flex-1 min-w-0">
+                    <Link
+                      to={generateProductUrl(product)}
+                      className="text-[13px] sm:text-sm font-medium text-foreground hover:text-primary line-clamp-2 leading-snug"
+                    >
+                      {product.title}
                     </Link>
-
-                    {/* Details */}
-                    <div className="flex-1 min-w-0">
-                      <Link to={generateProductUrl(product)} className="text-xs sm:text-sm font-medium text-foreground hover:text-primary line-clamp-2">
-                        {product.title}
-                      </Link>
+                    {(color || size) && (
                       <div className="flex flex-wrap gap-1.5 mt-1">
-                        {color && <span className="text-[10px] sm:text-xs text-muted-foreground bg-muted px-1.5 sm:px-2 py-0.5 rounded">{color}</span>}
-                        {size && <span className="text-[10px] sm:text-xs text-muted-foreground bg-muted px-1.5 sm:px-2 py-0.5 rounded">{size}</span>}
+                        {color && <span className="text-[10px] font-semibold text-muted-foreground bg-muted rounded-full px-2 py-0.5">{color}</span>}
+                        {size && <span className="text-[10px] font-semibold text-muted-foreground bg-muted rounded-full px-2 py-0.5">{size}</span>}
                       </div>
+                    )}
 
-                      {/* Price + controls row */}
-                      <div className="flex items-center justify-between mt-2 sm:mt-3 gap-2">
-                        <div className="flex items-center gap-2 sm:gap-3">
-                          <button
-                            onClick={() => id && updateQuantity(id, quantity - 1)}
-                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full border border-border flex items-center justify-center hover:bg-muted active:scale-95"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
-                          <span className="text-xs sm:text-sm font-medium w-5 sm:w-6 text-center">{quantity}</span>
-                          <button
-                            onClick={() => id && updateQuantity(id, quantity + 1)}
-                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-full border border-border flex items-center justify-center hover:bg-muted active:scale-95"
-                          >
-                            <Plus className="w-3 h-3" />
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-2 sm:gap-4">
-                          <span className="font-bold text-xs sm:text-base text-foreground"><TakaSign />{(product.price * quantity).toLocaleString()}</span>
-                          <button onClick={() => id && removeFromCart(id)} className="text-muted-foreground hover:text-destructive active:scale-95">
-                            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                          </button>
-                        </div>
+                    <div className="flex items-center justify-between mt-2.5 gap-2">
+                      <div className="flex items-center bg-muted rounded-full p-0.5">
+                        <button
+                          onClick={() => id && updateQuantity(id, quantity - 1)}
+                          className="w-7 h-7 rounded-full bg-card shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+                          aria-label="Decrease quantity"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="text-xs sm:text-sm font-bold w-8 text-center tabular-nums">{quantity}</span>
+                        <button
+                          onClick={() => id && updateQuantity(id, quantity + 1)}
+                          className="w-7 h-7 rounded-full bg-card shadow-sm flex items-center justify-center active:scale-90 transition-transform"
+                          aria-label="Increase quantity"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-extrabold text-sm sm:text-base text-primary">
+                          <TakaSign />
+                          {(product.price * quantity).toLocaleString()}
+                        </span>
+                        <button
+                          onClick={() => id && removeFromCart(id)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 active:scale-90 transition-all"
+                          aria-label="Remove from cart"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
 
-          {/* Order summary - desktop */}
-          <div className="hidden lg:block border border-border rounded-xl p-5 h-fit sticky top-24">
-            <h3 className="text-lg font-bold mb-4">Order Summary</h3>
+          {/* Order summary — desktop */}
+          <div className="hidden lg:block bg-card rounded-2xl shadow-[0_1px_3px_rgba(16,24,40,0.07)] p-5 sticky top-24">
+            <h3 className="text-lg font-extrabold mb-4">Order Summary</h3>
             <div className="space-y-2 text-sm mb-4">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Selected ({selectedCount} items)</span>
+                <span className="text-muted-foreground">Items ({selectedCount})</span>
                 <span className="font-medium"><TakaSign />{selectedTotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Shipping</span>
-                <span className={totalShipping === 0 ? "text-success font-medium" : "font-medium"}>
-                  {totalShipping === 0 ? 'Free' : <><TakaSign />{totalShipping.toLocaleString()}</>}
+                <span className={totalShipping === 0 ? "text-success font-semibold" : "font-medium"}>
+                  {totalShipping === 0 ? "Free" : <><TakaSign />{totalShipping.toLocaleString()}</>}
                 </span>
               </div>
               {shippingDetails.length > 0 && totalShipping > 0 && (
@@ -223,37 +230,43 @@ const Cart = () => {
               )}
             </div>
             <div className="border-t border-border pt-3 mb-4">
-              <div className="flex justify-between font-bold">
+              <div className="flex justify-between font-extrabold">
                 <span>Total</span>
-                <span className="text-primary"><TakaSign />{finalTotal.toLocaleString()}</span>
+                <span className="text-primary text-lg"><TakaSign />{finalTotal.toLocaleString()}</span>
               </div>
               <p className="text-xs text-muted-foreground mt-1">Tax excluded</p>
             </div>
             <button
               onClick={handleCheckout}
               disabled={selectedCount === 0}
-              className="w-full bg-primary text-primary-foreground font-bold py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-primary text-primary-foreground font-bold py-3.5 rounded-full hover:opacity-90 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Checkout ({selectedCount})
             </button>
             {selectedCount === 0 && (
               <p className="text-xs text-muted-foreground text-center mt-2">Select items to proceed</p>
             )}
+            <p className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground mt-3">
+              <ShieldCheck className="w-3.5 h-3.5 text-success" /> Secure checkout · bKash · Nagad · Cards · COD
+            </p>
           </div>
         </div>
       </main>
 
-      {/* Mobile sticky bottom bar */}
-      <div className="lg:hidden fixed bottom-14 left-0 right-0 bg-background border-t border-border px-3 py-3 z-40 flex items-center justify-between gap-3">
-        <div className="flex flex-col">
-          <span className="text-xs text-muted-foreground">
-            {selectedCount > 0 ? `${selectedCount} selected` : "No items selected"}
+      {/* Mobile sticky checkout bar (sits above bottom nav) */}
+      <div className="lg:hidden fixed bottom-[60px] left-0 right-0 bg-card border-t border-border/70 px-3 py-2.5 z-40 flex items-center justify-between gap-3 shadow-[0_-4px_16px_rgba(16,24,40,0.08)]">
+        <div className="flex flex-col min-w-0">
+          <span className="text-[11px] text-muted-foreground">
+            {selectedCount > 0 ? `${selectedCount} item${selectedCount > 1 ? "s" : ""} selected` : "No items selected"}
           </span>
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-bold text-primary"><TakaSign />{finalTotal.toLocaleString()}</span>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-lg font-extrabold text-primary">
+              <TakaSign />
+              {finalTotal.toLocaleString()}
+            </span>
             {totalShipping > 0 && (
-              <span className="text-xs text-muted-foreground">
-                (incl. <TakaSign />{totalShipping.toLocaleString()} shipping)
+              <span className="text-[10px] text-muted-foreground truncate">
+                incl. <TakaSign />{totalShipping.toLocaleString()} shipping
               </span>
             )}
           </div>
@@ -261,7 +274,7 @@ const Cart = () => {
         <button
           onClick={handleCheckout}
           disabled={selectedCount === 0}
-          className="bg-primary text-primary-foreground font-bold py-3 px-5 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] text-sm whitespace-nowrap"
+          className="bg-primary text-primary-foreground font-bold py-3 px-7 rounded-full hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] text-sm whitespace-nowrap"
         >
           Checkout
         </button>

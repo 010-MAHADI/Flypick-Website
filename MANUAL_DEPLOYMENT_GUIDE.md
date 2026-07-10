@@ -1,71 +1,21 @@
-# Manual Production Deployment Guide
-
-## Server Information
-- **Server IP**: 54.169.101.239
-- **Customer Domain**: flypick.shop
-- **Seller Domain**: seller.flypick.shop
-
----
-
-## Step 1: Server Preparation
-
-### 1.1 Update System
-```bash
-sudo apt update
-sudo apt upgrade -y
-```
-
-### 1.2 Install Required Packages
-```bash
-# Install Python and pip
-sudo apt install python3 python3-pip python3-venv -y
-
-# Install PostgreSQL
-sudo apt install postgresql postgresql-contrib -y
-
-# Install Nginx
-sudo apt install nginx -y
-
-# Install Node.js and npm
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install nodejs -y
-
-# Install Git
-sudo apt install git -y
-
-# Install SSL tools
-sudo apt install certbot python3-certbot-nginx -y
-```
-
-### 1.3 Create Application User
-```bash
-sudo adduser flypick
-sudo usermod -aG sudo flypick
-sudo su - flypick
-```
-
----
-
-## Step 2: Database Setup
-
 ### 2.1 Configure PostgreSQL
 ```bash
 # Switch to postgres user
-sudo -u postgres psql
+psql -U postgres
 
 # Create database and user
-CREATE DATABASE flypick_production;
+CREATE DATABASE flypick;
 CREATE USER flypick_user WITH PASSWORD 'your_secure_password_here';
 ALTER ROLE flypick_user SET client_encoding TO 'utf8';
 ALTER ROLE flypick_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE flypick_user SET timezone TO 'UTC';
-GRANT ALL PRIVILEGES ON DATABASE flypick_production TO flypick_user;
+GRANT ALL PRIVILEGES ON DATABASE flypick TO flypick_user;
 \q
 ```
 
 ### 2.2 Test Database Connection
 ```bash
-psql -h localhost -U flypick_user -d flypick_production
+psql -h localhost -U flypick_user -d flypick
 # Enter password when prompted
 # If successful, type \q to exit
 ```
@@ -77,7 +27,7 @@ psql -h localhost -U flypick_user -d flypick_production
 ### 3.1 Clone Repository
 ```bash
 cd /home/flypick
-git clone https://github.com/010-MAHADI/SIPI-Website.git
+git clone https://github.com/010-MAHADI/Flypick-Website.git
 cd SIPI-Website
 ```
 
@@ -86,6 +36,11 @@ cd SIPI-Website
 cd server
 python3 -m venv venv
 source venv/bin/activate
+
+# On Windows:
+cd server
+.\venv\Scripts\Activate.ps1
+python manage.py runserver
 ```
 
 ### 3.3 Install Python Dependencies

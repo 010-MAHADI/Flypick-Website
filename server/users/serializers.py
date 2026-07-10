@@ -155,9 +155,15 @@ class CustomerRegisterSerializer(serializers.ModelSerializer):
             role='Customer',
         )
 
-        # Always create customer profile for new customers (use get_or_create to avoid conflicts)
+        # A post_save signal already creates an empty CustomerProfile, so
+        # get_or_create's `defaults` would be ignored — apply the submitted
+        # profile fields (first/last name, phone, …) explicitly instead.
         from .models import CustomerProfile
-        CustomerProfile.objects.get_or_create(user=user, defaults=customer_profile_data)
+        profile, _ = CustomerProfile.objects.get_or_create(user=user)
+        if customer_profile_data:
+            for attr, value in customer_profile_data.items():
+                setattr(profile, attr, value)
+            profile.save()
 
         return user
 

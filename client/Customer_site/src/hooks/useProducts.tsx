@@ -68,7 +68,9 @@ const normalizeProduct = (p: any): Product => ({
     freeShipping: Boolean(p?.freeShipping),
     welcomeDeal: Boolean(p?.welcomeDeal),
     store: p?.shop_name || (typeof p?.shop === "object" && p?.shop?.name ? p.shop.name : "Official Store"),
-    category: p?.category_name || p?.shop_category || (typeof p?.shop === "object" && p?.shop?.category ? p.shop.category : "products"),
+    // Only a product's own category is a real product category; the shop's
+    // business category ("Marketplace") is not, so fall back to a clean default.
+    category: p?.category_name || "General",
     category_id: p?.category ? Number(p.category) : undefined,
     category_name: p?.category_name || undefined,
     description: p?.description || "",

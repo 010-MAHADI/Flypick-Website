@@ -1,7 +1,8 @@
-import { Star, ShoppingCart } from "lucide-react";
+import { Star, Heart } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Product } from "@/hooks/useProducts";
 import { generateProductUrl } from "@/lib/slugify";
+import { useWishlist } from "@/context/WishlistContext";
 import TakaSign from "@/components/TakaSign";
 
 interface ProductCardProps {
@@ -9,73 +10,69 @@ interface ProductCardProps {
 }
 
 const ProductCard = ({ product }: ProductCardProps) => {
+  const { toggleWishlist, isInWishlist } = useWishlist();
+  const liked = isInWishlist(product.id);
+  const hasDiscount = product.discount > 0 && product.originalPrice > product.price;
+
   return (
-    <Link to={generateProductUrl(product)} className="product-card group inline-block w-full">
-      <div className="relative overflow-hidden bg-muted">
+    <Link to={generateProductUrl(product)} className="product-card group">
+      <div className="relative aspect-square overflow-hidden bg-muted">
         <img
           src={product.image}
           alt={product.title}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          className="w-full h-full object-cover md:group-hover:scale-105 transition-transform duration-300"
           loading="lazy"
         />
+        {hasDiscount && (
+          <span className="absolute top-2 left-2 badge-discount shadow-sm">-{product.discount}%</span>
+        )}
         <button
-          onClick={(e) => { e.preventDefault(); }}
-          className="absolute bottom-2 right-2 bg-card/90 backdrop-blur-sm p-1.5 rounded-full border border-border opacity-0 group-hover:opacity-100 transition-opacity"
+          aria-label="Add to wishlist"
+          onClick={(e) => {
+            e.preventDefault();
+            toggleWishlist(product);
+          }}
+          className="absolute top-1.5 right-1.5 w-8 h-8 rounded-full bg-card/90 backdrop-blur-sm flex items-center justify-center shadow-sm active:scale-90 transition-transform"
         >
-          <ShoppingCart className="w-4 h-4 text-foreground" />
+          <Heart className={`w-4 h-4 ${liked ? "fill-primary text-primary" : "text-foreground/60"}`} />
         </button>
         {product.welcomeDeal && (
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-r from-primary to-secondary text-primary-foreground text-xs font-bold px-2 py-1">
-            WELCOME DEAL · Free shipping
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-r from-primary to-secondary text-primary-foreground text-[10px] font-bold px-2 py-1 text-center tracking-wide">
+            WELCOME DEAL
           </div>
         )}
       </div>
-      <div className="p-3">
-        {/* Badges */}
-        <div className="flex gap-1 mb-1.5 flex-wrap">
-          {product.badges.map((badge) => (
-            <span
-              key={badge}
-              className={badge === "Choice" ? "badge-choice" : "badge-sale"}
-            >
-              {badge}
-            </span>
-          ))}
-        </div>
 
-        <h3 className="text-sm text-foreground line-clamp-2 mb-2 leading-tight">
+      <div className="p-2.5 sm:p-3">
+        <h3 className="text-[13px] sm:text-sm text-foreground/90 line-clamp-2 leading-snug min-h-[2.4em] mb-1.5">
           {product.title}
         </h3>
 
-        <div className="flex items-baseline gap-2 mb-1">
-          <span className="price-current text-lg">
-            <TakaSign />{product.price.toLocaleString()}
+        <div className="flex items-baseline gap-1.5 flex-wrap">
+          <span className="price-current text-base sm:text-lg text-primary">
+            <TakaSign />
+            {product.price.toLocaleString()}
           </span>
-          <span className="price-original">
-            <TakaSign />{product.originalPrice.toLocaleString()}
-          </span>
-          <span className="price-discount">-{product.discount}%</span>
+          {hasDiscount && (
+            <span className="price-original">
+              <TakaSign />
+              {product.originalPrice.toLocaleString()}
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-0.5">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Star
-                key={i}
-                className={`w-3 h-3 ${i < Math.floor(product.rating) ? "fill-star text-star" : "text-border"}`}
-              />
-            ))}
-            <span className="ml-1">{product.rating}</span>
-          </div>
-          <span>|</span>
+        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          {product.rating > 0 && (
+            <span className="inline-flex items-center gap-0.5 font-semibold text-foreground/70">
+              <Star className="w-3 h-3 fill-star text-star" />
+              {product.rating}
+            </span>
+          )}
           <span>{product.sold} sold</span>
+          {product.badges.includes("Choice") && <span className="badge-choice ml-auto">Choice</span>}
         </div>
 
-        {product.freeShipping && (
-          <div className="mt-2">
-            <span className="badge-free-shipping">Free shipping</span>
-          </div>
-        )}
+        {product.freeShipping && <p className="badge-free-shipping mt-1">Free shipping</p>}
       </div>
     </Link>
   );

@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { Package, MapPin, CreditCard, Copy, ArrowLeft, Truck, Tag, RotateCcw, Star, XCircle } from "lucide-react";
+import { Package, MapPin, CreditCard, Copy, ArrowLeft, Truck, Tag, RotateCcw, Star, XCircle, Loader2 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useOrders } from "@/context/OrderContext";
@@ -7,6 +7,7 @@ import { generateProductUrl } from "@/lib/slugify";
 import { toast } from "sonner";
 import { useState } from "react";
 import TakaSign from "@/components/TakaSign";
+import api from "@/lib/api";
 
 const paymentLabels: Record<string, string> = {
   cod: "Cash on Delivery",
@@ -15,6 +16,7 @@ const paymentLabels: Record<string, string> = {
   nagad: "Nagad",
   card: "Credit / Debit Card",
   credit_card: "Credit / Debit Card",
+  uddoktapay: "Online Payment (UddoktaPay)",
 };
 
 const statusColorMap: Record<string, string> = {
@@ -29,6 +31,7 @@ const OrderDetail = () => {
   const { orderId } = useParams();
   const { orders, cancelOrder } = useOrders();
   const [cancelling, setCancelling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const order = orders.find((o) => o.order_id === orderId);
 
   if (!order) {
@@ -49,6 +52,23 @@ const OrderDetail = () => {
   const handleCopy = () => navigator.clipboard.writeText(order.order_id);
   const canTrack = order.status === "processing" || order.status === "shipped";
   const statusColor = statusColorMap[order.status] || "text-muted-foreground";
+
+  const handleCompletePayment = async () => {
+    setRetrying(true);
+    try {
+      const resp = await api.post('/orders/payments/retry/', {
+        order_id: order!.order_id,
+        frontend_url: window.location.origin,
+      });
+      if (resp.data.payment_url) {
+        window.location.href = resp.data.payment_url;
+      }
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail || 'Failed to get payment link. Please try again.');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const handleCancelOrder = async () => {
     if (!confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
@@ -104,8 +124,29 @@ const OrderDetail = () => {
               </p>
             </div>
             <div className="flex gap-2">
-              {/* Cancel Order Button - Only show for pending orders */}
-              {order.status === "pending" && (
+              {/* Complete Payment — uddoktapay orders still unpaid */}
+              {order.payment_method === 'uddoktapay' && order.payment_status !== 'paid' && order.status !== 'cancelled' && (
+                <button
+                  onClick={handleCompletePayment}
+                  disabled={retrying}
+                  className="text-center text-sm font-bold py-2.5 px-6 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                >
+                  {retrying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <CreditCard className="w-4 h-4" />
+                      Complete Payment
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* Cancel Order Button - Only show for pending unpaid orders */}
+              {order.status === "pending" && order.payment_status !== 'paid' && (
                 <button
                   onClick={handleCancelOrder}
                   disabled={cancelling}
@@ -124,7 +165,7 @@ const OrderDetail = () => {
                   )}
                 </button>
               )}
-              
+
               {canTrack && (
                 <Link
                   to={`/track-order/${order.order_id}`}
@@ -250,7 +291,21 @@ const OrderDetail = () => {
                 <h3 className="font-bold">Payment</h3>
               </div>
               <p className="text-sm text-muted-foreground">{paymentLabels[order.payment_method] || order.payment_method}</p>
-              <p className="text-xs text-muted-foreground mt-1 capitalize">Status: {order.payment_status}</p>
+              <div className={`inline-flex items-center gap-1.5 mt-2 text-xs font-bold px-2.5 py-1 rounded-full ${
+                order.payment_status === 'paid'
+                  ? 'bg-green-500/10 text-green-600'
+                  : order.payment_status === 'failed'
+                  ? 'bg-destructive/10 text-destructive'
+                  : 'bg-orange-500/10 text-orange-600'
+              }`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-current inline-block" />
+                {order.payment_status === 'paid' ? 'Paid' : order.payment_status === 'failed' ? 'Failed' : 'Payment Pending'}
+              </div>
+              {order.payment_method === 'uddoktapay' && order.payment_status !== 'paid' && order.status !== 'cancelled' && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Your payment is not complete. Use the "Complete Payment" button above to finish.
+                </p>
+              )}
             </div>
 
             <div className="bg-muted/50 border border-border rounded-xl p-4 text-center">

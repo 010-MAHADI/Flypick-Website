@@ -9,6 +9,7 @@ import { AdminLayout } from "@/components/AdminLayout";
 import Dashboard from "./pages/Dashboard";
 import Products from "./pages/Products";
 import ProductForm from "./pages/ProductForm";
+import ProductImport from "./pages/ProductImport";
 import Orders from "./pages/Orders";
 import Customers from "./pages/Customers";
 import Categories from "./pages/Categories";
@@ -91,6 +92,7 @@ const App = () => (
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/products" element={<Products />} />
                 <Route path="/products/new" element={<ProductForm />} />
+                <Route path="/products/import" element={<ProductImport />} />
                 <Route path="/products/:id/edit" element={<ProductForm />} />
                 <Route path="/orders" element={<Orders />} />
                 <Route path="/analytics" element={<Analytics />} />
