@@ -1,4 +1,4 @@
-import { Search, User, ShoppingCart, Heart, Menu, X, Home, Package, LogOut, Bell, LayoutGrid } from "lucide-react";
+import { Search, User, ShoppingCart, Heart, Menu, X, Home, Package, LogOut, Bell, LayoutGrid, Wallet, RotateCcw } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -334,6 +334,14 @@ const SiteHeader = () => {
                   <Link to="/orders" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-muted">
                     <Package className="w-5 h-5 text-muted-foreground" />
                     <span className="text-sm font-medium">My Orders</span>
+                  </Link>
+                  <Link to="/returns" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-muted">
+                    <RotateCcw className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">Returns</span>
+                  </Link>
+                  <Link to="/wallet" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-muted">
+                    <Wallet className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">Store Credit</span>
                   </Link>
                   <Link to="/notifications" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-muted relative">
                     <Bell className="w-5 h-5 text-muted-foreground" />

@@ -85,6 +85,12 @@ class CartViewSet(viewsets.ViewSet):
         
         if 'selected' in serializer.validated_data:
             cart_item.selected = serializer.validated_data['selected']
+
+        if 'saved_for_later' in serializer.validated_data:
+            cart_item.saved_for_later = serializer.validated_data['saved_for_later']
+            # A saved item can't be part of checkout; moving it back makes it
+            # active (and selected) again.
+            cart_item.selected = not cart_item.saved_for_later
         
         if 'color' in serializer.validated_data:
             cart_item.color = serializer.validated_data['color']
@@ -116,7 +122,8 @@ class CartViewSet(viewsets.ViewSet):
         """Select or deselect all items"""
         selected = request.data.get('selected', True)
         cart = get_object_or_404(Cart, user=request.user)
-        cart.items.all().update(selected=selected)
+        # Saved-for-later items are excluded from bulk selection
+        cart.items.filter(saved_for_later=False).update(selected=selected)
         
         return Response({'message': f'All items {"selected" if selected else "deselected"}'})
     
@@ -132,7 +139,7 @@ class CartViewSet(viewsets.ViewSet):
     def selected(self, request):
         """Get only selected items"""
         cart = get_object_or_404(Cart, user=request.user)
-        selected_items = cart.items.filter(selected=True)
+        selected_items = cart.items.filter(selected=True, saved_for_later=False)
         serializer = CartItemSerializer(selected_items, many=True)
         
         total = sum(item.total_price for item in selected_items)

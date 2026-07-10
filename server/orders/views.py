@@ -1,10 +1,33 @@
 from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 from django.db.models import F
-from .models import Order, PaymentMethod
-from .serializers import OrderSerializer, OrderCreateSerializer, PaymentMethodSerializer
+from .models import Order, PaymentMethod, Refund
+from .serializers import (
+    OrderSerializer, OrderCreateSerializer, OrderStatusHistorySerializer,
+    PaymentMethodSerializer, RefundSerializer, WalletTransactionSerializer,
+)
+from .lifecycle import (
+    allowed_next_statuses, create_refund, customer_cancellable_statuses,
+    record_status, transition_order, transition_refund, wallet_balance,
+)
 from users.roles import is_admin_user
+
+
+def _seller_can_manage_order(user, order):
+    """A seller may act on an order when it contains items from their shops."""
+    shop_ids = set(user.shops.values_list('id', flat=True))
+    return any(
+        item.product and item.product.shop_id in shop_ids
+        for item in order.items.all()
+    )
+
+
+def _can_manage_order(user, order):
+    return is_admin_user(user) or (
+        getattr(user, 'role', '') == 'Seller' and _seller_can_manage_order(user, order)
+    )
 
 class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
@@ -266,36 +289,157 @@ class OrderViewSet(viewsets.ModelViewSet):
         })
 
     def partial_update(self, request, *args, **kwargs):
-        # Allowing sellers/admins to update status
+        # Status changes always go through the lifecycle service so the
+        # legacy seller UI (bare PATCH {status}) gets validation + audit too.
+        new_status = request.data.get('status')
+        if new_status:
+            order = self.get_object()
+            if new_status != order.status:
+                if not _can_manage_order(request.user, order):
+                    return Response(
+                        {'detail': 'Only sellers and admins can update order status.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                transition_order(order, new_status, actor=request.user,
+                                 note=request.data.get('note', ''))
+            remaining = {k: v for k, v in request.data.items() if k not in ('status', 'note')}
+            if not remaining:
+                return Response(OrderSerializer(order, context={'request': request}).data)
         kwargs['partial'] = True
         return self.update(request, *args, **kwargs)
-    
+
     @action(detail=True, methods=['patch'])
     def cancel(self, request, pk=None):
-        """Allow customers to cancel their own pending orders"""
+        """Customer cancellation with reason. Auto-approved before shipment
+        (configurable via ORDER_CANCELLABLE_STATUSES); paid orders open a
+        refund case automatically."""
         order = self.get_object()
-        
-        # Check if the user is the order owner
-        if order.customer != request.user:
+
+        if order.customer != request.user and not is_admin_user(request.user):
             return Response(
                 {'detail': 'You can only cancel your own orders.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Check if order can be cancelled (only pending orders)
-        if order.status != 'pending':
+
+        cancellable = customer_cancellable_statuses()
+        if order.status not in cancellable and not is_admin_user(request.user):
             return Response(
-                {'detail': f'Cannot cancel order with status "{order.status}". Only pending orders can be cancelled.'},
+                {'detail': f'Cannot cancel an order that is already "{order.get_status_display()}". '
+                           'Please request a return after delivery instead.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Update order status to cancelled
-        order.status = 'cancelled'
-        order.save(update_fields=['status'])
-        
-        # Return updated order
+
+        reason = (request.data.get('reason') or 'Cancelled by customer').strip()
+        transition_order(order, 'cancelled', actor=request.user, note=reason)
+
+        # Paid orders get their money back through the refund workflow
+        refund = None
+        if order.payment_status == 'paid' and order.total_amount > 0:
+            refund = create_refund(
+                order, order.total_amount,
+                method='original', refund_type='full',
+                reason=f'Order cancelled: {reason}'[:255],
+                requested_by=request.user,
+                note='Automatically opened on cancellation of a paid order',
+            )
+        # Money paid from store credit always returns instantly
+        if order.store_credit_used and order.store_credit_used > 0:
+            credit_back = create_refund(
+                order, order.store_credit_used,
+                method='store_credit', refund_type='partial' if refund else 'full',
+                reason='Store credit returned after cancellation',
+                requested_by=request.user,
+                initial_status='requested',
+            )
+            transition_refund(credit_back, 'approved', actor=request.user,
+                              note='Auto-approved store credit return')
+            transition_refund(credit_back, 'completed', actor=request.user)
+
         serializer = OrderSerializer(order, context={'request': request})
-        return Response(serializer.data)
+        data = serializer.data
+        if refund:
+            data['refund_id'] = refund.refund_id
+        return Response(data)
+
+    @action(detail=True, methods=['post'])
+    def update_status(self, request, pk=None):
+        """Seller/admin fulfilment workflow: move an order forward through
+        the lifecycle, optionally attaching tracking details."""
+        order = self.get_object()
+        if not _can_manage_order(request.user, order):
+            return Response(
+                {'detail': 'Only sellers and admins can update order status.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        new_status = request.data.get('status')
+        note = request.data.get('note', '')
+        if not new_status:
+            return Response({'detail': 'status is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Same status + a note = a tracking note on the timeline, not a
+        # transition. Lets sellers post updates without changing the status.
+        if new_status == order.status:
+            if not note:
+                return Response({'detail': 'Add a note or pick a different status.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            tracking_number = request.data.get('tracking_number')
+            if tracking_number:
+                order.tracking_number = tracking_number[:100]
+                order.save(update_fields=['tracking_number', 'updated_at'])
+            record_status(order, order.status, order.status, actor=request.user, note=note)
+            return Response(OrderSerializer(order, context={'request': request}).data)
+
+        estimated = request.data.get('estimated_delivery_date') or None
+        transition_order(
+            order, new_status, actor=request.user,
+            note=note,
+            tracking_number=request.data.get('tracking_number'),
+            courier_name=request.data.get('courier_name'),
+            estimated_delivery_date=estimated,
+        )
+        return Response(OrderSerializer(order, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def mark_paid(self, request, pk=None):
+        """Seller/admin records an offline payment (e.g. COD collected)."""
+        order = self.get_object()
+        if not _can_manage_order(request.user, order):
+            return Response({'detail': 'Only sellers and admins can record payments.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if order.payment_status == 'paid':
+            return Response({'detail': 'This order is already marked as paid.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        method = (request.data.get('payment_method') or order.payment_method or 'cod').strip()
+        note = (request.data.get('note') or '').strip()
+        order.payment_status = 'paid'
+        order.payment_method = method[:50]
+        order.save(update_fields=['payment_status', 'payment_method', 'updated_at'])
+        record_status(
+            order, order.status, order.status, actor=request.user,
+            note=f'Payment received via {method}' + (f' — {note}' if note else ''),
+        )
+        return Response(OrderSerializer(order, context={'request': request}).data)
+
+    @action(detail=True, methods=['get'])
+    def timeline(self, request, pk=None):
+        """Full tracking view: status history + shipment info + next steps."""
+        order = self.get_object()
+        if order.customer != request.user and not _can_manage_order(request.user, order):
+            return Response({'detail': 'Not allowed.'}, status=status.HTTP_403_FORBIDDEN)
+
+        history = OrderStatusHistorySerializer(order.status_history.all(), many=True).data
+        return Response({
+            'order_id': order.order_id,
+            'status': order.status,
+            'tracking_number': order.tracking_number,
+            'courier_name': order.courier_name,
+            'estimated_delivery_date': order.estimated_delivery_date,
+            'history': history,
+            'allowed_next_statuses': sorted(allowed_next_statuses(order.status))
+                if _can_manage_order(request.user, order) else [],
+        })
 
 
 class PaymentMethodViewSet(viewsets.ModelViewSet):
@@ -521,32 +665,237 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['patch'])
     def update_status(self, request, pk=None):
-        """Update return request status (seller/admin only)"""
+        """Review a return request (seller/admin): approve, reject or ask the
+        customer for more information. Approval opens a refund case."""
         from .serializers import ReturnRequestSerializer
-        
+        from notifications.services import NotificationService
+
         if request.user.role not in ['Seller', 'Admin'] and not is_admin_user(request.user):
             return Response(
                 {'detail': 'Only sellers and admins can update return request status.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
+        from decimal import Decimal, InvalidOperation
+
         return_request = self.get_object()
         new_status = request.data.get('status')
         admin_note = request.data.get('admin_note', '')
         refund_amount = request.data.get('refund_amount')
-        
-        if new_status not in ['pending', 'approved', 'rejected', 'refunded']:
+        if refund_amount is not None:
+            try:
+                refund_amount = Decimal(str(refund_amount))
+            except InvalidOperation:
+                return Response({'detail': 'Invalid refund amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Prefer the method the customer chose when filing the return
+        refund_method = request.data.get('refund_method') or return_request.refund_method or 'original'
+
+        if new_status not in ['pending', 'info_requested', 'approved', 'rejected', 'refunded']:
             return Response(
                 {'detail': 'Invalid status value.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        previous_status = return_request.status
         return_request.status = new_status
         if admin_note:
             return_request.admin_note = admin_note
         if refund_amount is not None:
             return_request.refund_amount = refund_amount
         return_request.save()
-        
+
+        refund = None
+        if new_status == 'refunded' and previous_status != 'refunded':
+            # Legacy seller flow: marking the return "refunded" completes the
+            # linked refund case (creating one first if it doesn't exist).
+            order = return_request.order
+            amount = return_request.refund_amount or order.total_amount
+            open_refund = return_request.refunds.exclude(status__in=['rejected', 'completed']).first()
+            if not open_refund and not return_request.refunds.filter(status='completed').exists():
+                open_refund = create_refund(
+                    order, amount,
+                    method=refund_method if refund_method in ('original', 'store_credit', 'manual') else 'original',
+                    refund_type='full' if amount >= order.total_amount else 'partial',
+                    reason=f'Return {return_request.return_id} refunded',
+                    requested_by=order.customer,
+                    return_request=return_request,
+                    initial_status='approved',
+                )
+            if open_refund:
+                if open_refund.status in ('requested', 'under_review'):
+                    transition_refund(open_refund, 'approved', actor=request.user, note=admin_note)
+                if open_refund.status == 'approved':
+                    transition_refund(open_refund, 'processing', actor=request.user)
+                if open_refund.status == 'processing':
+                    transition_refund(open_refund, 'completed', actor=request.user,
+                                      note='Refund processed from return request')
+
+        if new_status == 'approved' and previous_status != 'approved':
+            # Open a refund case for the agreed amount
+            order = return_request.order
+            amount = return_request.refund_amount or order.total_amount
+            if not return_request.refunds.exclude(status='rejected').exists():
+                refund = create_refund(
+                    order, amount,
+                    method=refund_method if refund_method in ('original', 'store_credit', 'manual') else 'original',
+                    refund_type='full' if amount >= order.total_amount else 'partial',
+                    reason=f'Return {return_request.return_id} approved',
+                    requested_by=order.customer,
+                    return_request=return_request,
+                    initial_status='approved',
+                    note=admin_note or 'Return approved',
+                )
+            try:
+                transition_order(order, 'returned', actor=request.user,
+                                 note=f'Return {return_request.return_id} approved')
+            except DRFValidationError:
+                pass  # order may not be in a returnable status anymore
+
+        # Notify the customer about the review outcome
+        try:
+            messages = {
+                'info_requested': ('More information needed',
+                                   f'We need more details about your return {return_request.return_id}. '
+                                   + (admin_note or 'Please contact support.')),
+                'approved': ('Return approved',
+                             f'Your return {return_request.return_id} was approved. A refund is being processed.'),
+                'rejected': ('Return rejected',
+                             f'Your return {return_request.return_id} was rejected. '
+                             + (admin_note or 'Contact support for details.')),
+            }
+            if new_status in messages and new_status != previous_status:
+                title, message = messages[new_status]
+                NotificationService.create_notification(
+                    user=return_request.order.customer,
+                    title=title, message=message,
+                    notification_type='system', priority='high',
+                    order_id=return_request.order.order_id,
+                    action_url='/returns', action_text='View Returns',
+                )
+        except Exception:
+            pass
+
         serializer = ReturnRequestSerializer(return_request, context={'request': request})
-        return Response(serializer.data)
+        data = serializer.data
+        if refund:
+            data['refund_id'] = refund.refund_id
+        return Response(data)
+
+
+class RefundViewSet(viewsets.ReadOnlyModelViewSet):
+    """Refund cases: customers see their own, sellers see their shops',
+    admins see everything. Status moves via the ``transition`` action."""
+    serializer_class = RefundSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        base = Refund.objects.select_related('order').prefetch_related('events')
+        if is_admin_user(user):
+            return base
+        if getattr(user, 'role', '') == 'Seller':
+            shop_ids = user.shops.values_list('id', flat=True)
+            return base.filter(order__items__product__shop_id__in=shop_ids).distinct()
+        return base.filter(order__customer=user)
+
+    def create(self, request, *args, **kwargs):
+        """Create a refund.
+
+        - Customers: opens a refund *request* for their own paid order
+          (reviewed by the seller before any money moves).
+        - Sellers/admins: processes a refund directly (full or partial) —
+          the case is created, approved and completed in one step, moving
+          store credit / marking the order refunded immediately.
+        """
+        from decimal import Decimal, InvalidOperation
+
+        order_id = request.data.get('order_id')
+        reason = (request.data.get('reason') or '').strip()
+        method = request.data.get('method', 'original')
+        if method not in ('original', 'store_credit', 'manual'):
+            method = 'original'
+        is_manager = is_admin_user(request.user) or getattr(request.user, 'role', '') == 'Seller'
+
+        if not reason:
+            return Response({'detail': 'Please provide a reason for the refund.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # ---------- seller / admin: process a refund now ----------
+        if is_manager:
+            order = Order.objects.filter(order_id=order_id).first()
+            if not order or not _can_manage_order(request.user, order):
+                return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            try:
+                amount = Decimal(str(request.data.get('amount') or order.total_amount))
+            except InvalidOperation:
+                return Response({'detail': 'Invalid refund amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            from django.db.models import Sum
+            already_refunded = (
+                order.refunds.filter(status='completed').aggregate(total=Sum('amount'))['total']
+                or Decimal('0')
+            )
+            refundable = order.total_amount - already_refunded
+            if amount <= 0 or amount > refundable:
+                return Response(
+                    {'detail': f'Refund amount must be between 0 and {refundable} '
+                               '(order total minus already-refunded amounts).'},
+                    status=status.HTTP_400_BAD_REQUEST)
+
+            refund_type = 'full' if amount >= refundable and already_refunded == 0 else 'partial'
+            refund = create_refund(
+                order, amount, method=method, refund_type=refund_type,
+                reason=reason, requested_by=request.user,
+                initial_status='approved',
+                note=f'Initiated by {"admin" if is_admin_user(request.user) else "seller"}',
+            )
+            transition_refund(refund, 'processing', actor=request.user)
+            transition_refund(refund, 'completed', actor=request.user,
+                              note=(request.data.get('note') or '').strip())
+            return Response(RefundSerializer(refund).data, status=status.HTTP_201_CREATED)
+
+        # ---------- customer: open a refund request ----------
+        try:
+            order = Order.objects.get(order_id=order_id, customer=request.user)
+        except Order.DoesNotExist:
+            return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.payment_status != 'paid':
+            return Response({'detail': 'Refunds can only be requested for paid orders.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if order.refunds.exclude(status='rejected').exists():
+            return Response({'detail': 'A refund for this order is already in progress.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        refund = create_refund(
+            order, order.total_amount,
+            method=method if method in ('original', 'store_credit') else 'original',
+            refund_type='full', reason=reason, requested_by=request.user,
+        )
+        return Response(RefundSerializer(refund).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def transition(self, request, pk=None):
+        """Move a refund through its workflow (seller/admin only)."""
+        if request.user.role not in ['Seller', 'Admin'] and not is_admin_user(request.user):
+            return Response({'detail': 'Only sellers and admins can process refunds.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        refund = self.get_object()
+        new_status = request.data.get('status')
+        if not new_status:
+            return Response({'detail': 'status is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        transition_refund(refund, new_status, actor=request.user,
+                          note=request.data.get('note', ''))
+        return Response(RefundSerializer(refund).data)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def wallet_view(request):
+    """The customer's store-credit balance and full transaction history."""
+    transactions = request.user.wallet_transactions.select_related('order', 'refund')[:50]
+    return Response({
+        'balance': str(wallet_balance(request.user)),
+        'transactions': WalletTransactionSerializer(transactions, many=True).data,
+    })

@@ -233,7 +233,7 @@ def _notify_refund(refund, status):
 
 def wallet_balance(user):
     total = user.wallet_transactions.aggregate(total=Sum('amount'))['total']
-    return total or Decimal('0.00')
+    return (total or Decimal('0')).quantize(Decimal('0.01'))
 
 
 @transaction.atomic

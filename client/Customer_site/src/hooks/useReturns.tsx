@@ -15,10 +15,12 @@ export interface ReturnRequest {
   return_id: string;
   order: number;
   order_id: string;
-  status: string; // pending, approved, rejected, refunded
+  status: string; // pending, info_requested, approved, rejected, refunded
   reason: string;
   description: string;
+  refund_method?: string;
   items: ReturnItem[];
+  image_urls?: string[];
   created_at: string;
   updated_at: string;
   refund_amount?: string;
@@ -29,6 +31,7 @@ interface SubmitReturnData {
   order_id: string;
   reason: string;
   description: string;
+  refund_method?: string;
   items: { order_item_id: number; quantity: number }[];
 }
 

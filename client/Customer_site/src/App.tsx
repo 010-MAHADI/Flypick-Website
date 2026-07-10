@@ -29,6 +29,8 @@ import Contact from "./pages/Contact";
 import FAQ from "./pages/FAQ";
 import OrderDetail from "./pages/OrderDetail";
 import TrackOrder from "./pages/TrackOrder";
+import Wallet from "./pages/Wallet";
+import Invoice from "./pages/Invoice";
 import SuperDeals from "./pages/SuperDeals";
 import BundleDeals from "./pages/BundleDeals";
 import Returns from "./pages/Returns";
@@ -68,6 +70,8 @@ const App = () => (
             <Route path="/orders" element={<Orders />} />
             <Route path="/order/:orderId" element={<OrderDetail />} />
             <Route path="/track-order/:orderId" element={<TrackOrder />} />
+            <Route path="/wallet" element={<Wallet />} />
+            <Route path="/invoice/:orderId" element={<Invoice />} />
             <Route path="/account" element={<Account />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/search" element={<Search />} />

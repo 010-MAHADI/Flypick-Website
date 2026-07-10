@@ -171,6 +171,11 @@ class ReturnRequest(models.Model):
     description = models.TextField(blank=True, null=True)
     # Media evidence uploaded by the customer (paths under MEDIA_ROOT)
     images = models.JSONField(default=list, blank=True)
+    # How the customer wants their money back if the return is approved
+    refund_method = models.CharField(
+        max_length=20, default='original',
+        choices=(('original', 'Original Payment Method'), ('store_credit', 'Store Credit')),
+    )
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     refund_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)

@@ -1,5 +1,8 @@
 from django.contrib import admin
-from .models import Order, OrderItem, PaymentMethod, ReturnRequest, ReturnItem
+from .models import (
+    Order, OrderItem, OrderStatusHistory, PaymentMethod,
+    Refund, RefundEvent, ReturnRequest, ReturnItem, WalletTransaction,
+)
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
@@ -21,13 +24,53 @@ class OrderAdmin(admin.ModelAdmin):
         ('Shipping Address', {
             'fields': ('shipping_full_name', 'shipping_phone', 'shipping_street', 'shipping_city', 'shipping_state', 'shipping_zip_code', 'shipping_country')
         }),
+        ('Customer Notes', {
+            'fields': ('order_notes', 'delivery_instructions')
+        }),
+        ('Tracking', {
+            'fields': ('tracking_number', 'courier_name', 'estimated_delivery_date')
+        }),
+        ('Cancellation', {
+            'fields': ('cancellation_reason', 'cancelled_by')
+        }),
         ('Payment', {
             'fields': ('payment_method', 'payment_status')
         }),
         ('Pricing', {
-            'fields': ('subtotal', 'shipping_cost', 'discount', 'coupon_code', 'total_amount')
+            'fields': ('subtotal', 'shipping_cost', 'discount', 'coupon_code', 'store_credit_used', 'total_amount')
         }),
     )
+
+
+@admin.register(OrderStatusHistory)
+class OrderStatusHistoryAdmin(admin.ModelAdmin):
+    list_display = ['order', 'from_status', 'to_status', 'changed_by', 'created_at']
+    list_filter = ['to_status', 'created_at']
+    search_fields = ['order__order_id', 'note']
+    readonly_fields = [f.name for f in OrderStatusHistory._meta.fields]
+
+
+class RefundEventInline(admin.TabularInline):
+    model = RefundEvent
+    extra = 0
+    readonly_fields = ['from_status', 'to_status', 'note', 'actor', 'created_at']
+
+
+@admin.register(Refund)
+class RefundAdmin(admin.ModelAdmin):
+    list_display = ['refund_id', 'order', 'amount', 'method', 'refund_type', 'status', 'created_at']
+    list_filter = ['status', 'method', 'refund_type', 'created_at']
+    search_fields = ['refund_id', 'order__order_id', 'reason']
+    readonly_fields = ['refund_id', 'created_at', 'updated_at']
+    inlines = [RefundEventInline]
+
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display = ['user', 'amount', 'source', 'balance_after', 'order', 'refund', 'created_at']
+    list_filter = ['source', 'created_at']
+    search_fields = ['user__email', 'user__username', 'note']
+    raw_id_fields = ['user', 'order', 'refund']
 
 @admin.register(OrderItem)
 class OrderItemAdmin(admin.ModelAdmin):

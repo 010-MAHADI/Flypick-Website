@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { User, Package, Heart, MapPin, Settings, LogOut, ChevronRight, ArrowLeft, Plus, Trash2, Star, X, Pencil, Camera } from "lucide-react";
+import { User, Package, Heart, MapPin, Settings, LogOut, ChevronRight, ArrowLeft, Plus, Trash2, Star, X, Pencil, Camera, Wallet, RotateCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
@@ -29,10 +29,16 @@ const Account = () => {
     return null;
   }
 
-  // Handle navigation to orders page when orders section is selected
+  // Sections that live on their own routes navigate there directly
   useEffect(() => {
-    if (activeSection === "orders") {
-      navigate("/orders");
+    const routes: Record<string, string> = {
+      orders: "/orders",
+      wishlist: "/wishlist",
+      wallet: "/wallet",
+      returns: "/returns",
+    };
+    if (activeSection && routes[activeSection]) {
+      navigate(routes[activeSection]);
     }
   }, [activeSection, navigate]);
 
@@ -106,6 +112,8 @@ const Account = () => {
   const menuItems = [
     { id: "profile", label: "My Profile", icon: User, desc: "Edit your personal info" },
     { id: "orders", label: "My Orders", icon: Package, desc: "Track and manage orders" },
+    { id: "returns", label: "Returns", icon: RotateCcw, desc: "Track your return requests" },
+    { id: "wallet", label: "Store Credit", icon: Wallet, desc: "Balance & refund history" },
     { id: "wishlist", label: "Wishlist", icon: Heart, desc: "Items you've saved" },
     { id: "addresses", label: "Addresses", icon: MapPin, desc: "Manage delivery addresses" },
     { id: "settings", label: "Settings", icon: Settings, desc: "Preferences & privacy" },

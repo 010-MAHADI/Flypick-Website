@@ -98,7 +98,8 @@ class SocialAuthCallbackTests(TestCase):
             password="test-pass-123",
             role="Seller",
         )
-        SellerProfile.objects.create(user=user, status="pending")
+        # The post_save signal already auto-creates the profile
+        SellerProfile.objects.update_or_create(user=user, defaults={"status": "pending"})
         state = encode_social_state("google", "/account")
 
         with patch(

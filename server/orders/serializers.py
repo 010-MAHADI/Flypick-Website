@@ -683,8 +683,8 @@ class ReturnRequestSerializer(serializers.ModelSerializer):
         model = ReturnRequest
         fields = [
             'id', 'return_id', 'order', 'order_id', 'reason', 'description',
-            'status', 'refund_amount', 'admin_note', 'items', 'image_urls',
-            'created_at', 'updated_at'
+            'refund_method', 'status', 'refund_amount', 'admin_note', 'items',
+            'image_urls', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'return_id', 'created_at', 'updated_at']
 
@@ -705,13 +705,21 @@ class ReturnRequestCreateSerializer(serializers.Serializer):
     items = serializers.ListField(
         child=serializers.DictField(child=serializers.IntegerField())
     )
-    
+    # Optional photo evidence: list of base64 data URLs, stored to media
+    images = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list, max_length=5
+    )
+    # How the customer wants their refund if the return is approved
+    refund_method = serializers.ChoiceField(
+        choices=['original', 'store_credit'], required=False, default='original'
+    )
+
     def validate_order_id(self, value):
         try:
             order = Order.objects.get(order_id=value)
             if order.customer != self.context['request'].user:
                 raise serializers.ValidationError("You can only request returns for your own orders.")
-            if order.status != 'delivered':
+            if order.status not in ('delivered', 'completed'):
                 raise serializers.ValidationError("Returns can only be requested for delivered orders.")
             
             # Check if there's already a pending or approved return request for this order
@@ -780,22 +788,49 @@ class ReturnRequestCreateSerializer(serializers.Serializer):
         
         return data
     
+    def _store_images(self, images, return_id):
+        """Persist base64 data-URL evidence under media/returns/."""
+        import base64
+        import uuid as uuid_mod
+        from django.core.files.base import ContentFile
+        from django.core.files.storage import default_storage
+
+        stored = []
+        for image in (images or [])[:5]:
+            if not isinstance(image, str) or not image.startswith('data:image/'):
+                continue
+            try:
+                header, payload = image.split(',', 1)
+                ext = header.split('/')[1].split(';')[0].lower()
+                if ext not in ('jpeg', 'jpg', 'png', 'webp'):
+                    continue
+                data = base64.b64decode(payload)
+                if len(data) > 5 * 1024 * 1024:  # 5MB per image
+                    continue
+                path = f'returns/{return_id}_{uuid_mod.uuid4().hex[:6]}.{ext}'
+                stored.append(default_storage.save(path, ContentFile(data)))
+            except Exception:
+                continue
+        return stored
+
     def create(self, validated_data):
         import uuid
         from .models import ReturnRequest, ReturnItem
-        
+
         order = Order.objects.get(order_id=validated_data['order_id'])
         items_data = validated_data.pop('items')
-        
+
         # Generate unique return ID
         return_id = f"RET{uuid.uuid4().hex[:10].upper()}"
-        
+
         # Create return request
         return_request = ReturnRequest.objects.create(
             order=order,
             return_id=return_id,
             reason=validated_data['reason'],
             description=validated_data.get('description', ''),
+            images=self._store_images(validated_data.get('images'), return_id),
+            refund_method=validated_data.get('refund_method', 'original'),
             status='pending'
         )
         

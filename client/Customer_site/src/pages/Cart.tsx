@@ -1,17 +1,30 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Minus, Plus, Trash2, ShoppingCart, ShieldCheck } from "lucide-react";
+import { Minus, Plus, Trash2, ShoppingCart, ShieldCheck, Bookmark, Undo2 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useCart } from "@/context/CartContext";
 import { Checkbox } from "@/components/ui/checkbox";
 import { generateProductUrl } from "@/lib/slugify";
 import TakaSign from "@/components/TakaSign";
+import { toast } from "sonner";
 
 const Cart = () => {
-  const { items, updateQuantity, removeFromCart, toggleSelect, selectAll, selectedTotal, selectedCount, loading, selectedItems } = useCart();
+  const { items, updateQuantity, removeFromCart, toggleSelect, selectAll, setSavedForLater, selectedTotal, selectedCount, loading, selectedItems } = useCart();
   const navigate = useNavigate();
 
-  const allSelected = items.length > 0 && items.every((i) => i.selected);
+  const activeItems = items.filter((i) => !i.savedForLater);
+  const savedItems = items.filter((i) => i.savedForLater);
+  const allSelected = activeItems.length > 0 && activeItems.every((i) => i.selected);
+
+  const handleSaveForLater = async (itemId: number | undefined, save: boolean) => {
+    if (!itemId) return;
+    try {
+      await setSavedForLater(itemId, save);
+      toast.success(save ? "Saved for later" : "Moved back to cart");
+    } catch {
+      toast.error("Could not update the item");
+    }
+  };
 
   // Calculate shipping costs from selected products
   const calculateShipping = () => {
@@ -121,7 +134,7 @@ const Cart = () => {
       <SiteHeader />
       <main className="max-w-[1100px] mx-auto px-3 sm:px-4 py-3 sm:py-6 pb-40 lg:pb-10">
         <h1 className="text-xl sm:text-2xl font-extrabold mb-3 sm:mb-5">
-          My Cart <span className="text-muted-foreground font-semibold text-base">({items.reduce((s, i) => s + i.quantity, 0)} items)</span>
+          My Cart <span className="text-muted-foreground font-semibold text-base">({activeItems.reduce((s, i) => s + i.quantity, 0)} items)</span>
         </h1>
 
         <div className="grid lg:grid-cols-[1fr_340px] gap-4 sm:gap-6 items-start">
@@ -130,11 +143,11 @@ const Cart = () => {
             <div className="bg-card rounded-2xl shadow-[0_1px_3px_rgba(16,24,40,0.07)] px-4 py-3 flex items-center gap-3">
               <Checkbox checked={allSelected} onCheckedChange={(checked) => selectAll(!!checked)} id="select-all" />
               <label htmlFor="select-all" className="text-sm font-semibold cursor-pointer">
-                Select all ({items.length})
+                Select all ({activeItems.length})
               </label>
             </div>
 
-            {items.map(({ id, product, quantity, selected, color, size }) => (
+            {activeItems.map(({ id, product, quantity, selected, color, size }) => (
               <div
                 key={id || product.id}
                 className={`bg-card rounded-2xl p-3 sm:p-4 transition-all shadow-[0_1px_3px_rgba(16,24,40,0.07)] ${
@@ -185,11 +198,19 @@ const Cart = () => {
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-extrabold text-sm sm:text-base text-primary">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-extrabold text-sm sm:text-base text-primary mr-1.5">
                           <TakaSign />
                           {(product.price * quantity).toLocaleString()}
                         </span>
+                        <button
+                          onClick={() => handleSaveForLater(id, true)}
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-accent active:scale-90 transition-all"
+                          aria-label="Save for later"
+                          title="Save for later"
+                        >
+                          <Bookmark className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => id && removeFromCart(id)}
                           className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 active:scale-90 transition-all"
@@ -203,6 +224,61 @@ const Cart = () => {
                 </div>
               </div>
             ))}
+
+            {/* Saved for later */}
+            {savedItems.length > 0 && (
+              <div className="pt-2">
+                <h2 className="text-sm font-extrabold mb-2.5 flex items-center gap-1.5">
+                  <Bookmark className="w-4 h-4 text-primary" />
+                  Saved for later ({savedItems.length})
+                </h2>
+                <div className="space-y-3">
+                  {savedItems.map(({ id, product, quantity, color, size }) => (
+                    <div key={id || product.id} className="bg-card rounded-2xl p-3 sm:p-4 shadow-[0_1px_3px_rgba(16,24,40,0.07)] opacity-90">
+                      <div className="flex gap-3 items-center">
+                        <Link
+                          to={generateProductUrl(product)}
+                          className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden flex-shrink-0 bg-muted"
+                        >
+                          <img src={product.image} alt={product.title} className="w-full h-full object-cover" />
+                        </Link>
+                        <div className="flex-1 min-w-0">
+                          <Link
+                            to={generateProductUrl(product)}
+                            className="text-[13px] font-medium text-foreground hover:text-primary line-clamp-2 leading-snug"
+                          >
+                            {product.title}
+                          </Link>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            ×{quantity}
+                            {color ? ` · ${color}` : ""}
+                            {size ? ` · ${size}` : ""}
+                          </p>
+                          <p className="font-extrabold text-sm text-primary mt-1">
+                            <TakaSign />
+                            {(product.price * quantity).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="flex flex-col gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => handleSaveForLater(id, false)}
+                            className="chip !text-[11px] !py-1.5"
+                          >
+                            <Undo2 className="w-3 h-3" /> Move to cart
+                          </button>
+                          <button
+                            onClick={() => id && removeFromCart(id)}
+                            className="chip !text-[11px] !py-1.5 !text-destructive hover:!border-destructive/40"
+                          >
+                            <Trash2 className="w-3 h-3" /> Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Order summary — desktop */}

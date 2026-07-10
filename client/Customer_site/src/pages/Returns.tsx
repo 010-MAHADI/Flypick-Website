@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { RotateCcw, Package, ChevronRight } from "lucide-react";
+import { RotateCcw, Check, Wallet } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useReturns, ReturnRequest } from "@/hooks/useReturns";
@@ -7,10 +7,26 @@ import TakaSign from "@/components/TakaSign";
 
 const statusStyles: Record<string, string> = {
   pending: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20",
+  info_requested: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   approved: "bg-primary/10 text-primary border-primary/20",
   rejected: "bg-destructive/10 text-destructive border-destructive/20",
   refunded: "bg-green-500/10 text-green-600 border-green-500/20",
 };
+
+const statusLabels: Record<string, string> = {
+  pending: "Pending review",
+  info_requested: "More info needed",
+  approved: "Approved",
+  rejected: "Rejected",
+  refunded: "Refunded",
+};
+
+// The tracked journey. "rejected" is shown separately (not a step).
+const TRACK_STEPS = [
+  { key: "pending", label: "Requested" },
+  { key: "approved", label: "Approved" },
+  { key: "refunded", label: "Refunded" },
+];
 
 const Returns = () => {
   const { data: returns = [], isLoading } = useReturns();
@@ -52,6 +68,10 @@ const Returns = () => {
 
 const ReturnCard = ({ returnReq }: { returnReq: ReturnRequest }) => {
   const style = statusStyles[returnReq.status] || "bg-muted text-muted-foreground";
+  const isRejected = returnReq.status === "rejected";
+  const activeStep = TRACK_STEPS.findIndex((s) => s.key === returnReq.status);
+  // info_requested sits between requested and approved
+  const effectiveStep = returnReq.status === "info_requested" ? 0 : activeStep;
 
   return (
     <div className="bg-card rounded-xl border border-border p-4">
@@ -65,28 +85,63 @@ const ReturnCard = ({ returnReq }: { returnReq: ReturnRequest }) => {
             Order: {returnReq.order_id} · {new Date(returnReq.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
           </p>
         </div>
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border capitalize ${style}`}>
-          {returnReq.status}
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${style}`}>
+          {statusLabels[returnReq.status] || returnReq.status}
         </span>
       </div>
+
+      {/* Status tracker */}
+      {!isRejected ? (
+        <div className="flex items-center mb-4">
+          {TRACK_STEPS.map((step, idx) => {
+            const done = effectiveStep >= idx;
+            const isLast = idx === TRACK_STEPS.length - 1;
+            return (
+              <div key={step.key} className={`flex items-center ${isLast ? "" : "flex-1"}`}>
+                <div className="flex flex-col items-center">
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${done ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                    {done ? <Check className="w-3 h-3" /> : idx + 1}
+                  </span>
+                  <span className={`text-[10px] font-semibold mt-1 ${done ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+                </div>
+                {!isLast && <div className={`flex-1 h-0.5 mx-1 -mt-4 rounded-full ${effectiveStep > idx ? "bg-primary" : "bg-muted"}`} />}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="mb-3 p-2.5 rounded-lg bg-destructive/5 text-destructive text-xs font-semibold">
+          This return request was rejected.
+        </div>
+      )}
 
       <p className="text-sm text-muted-foreground mb-2">
         <span className="font-medium text-foreground">Reason:</span> {returnReq.reason}
       </p>
 
       {returnReq.description && (
-        <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{returnReq.description}</p>
+        <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{returnReq.description}</p>
+      )}
+
+      {returnReq.refund_method && (
+        <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1.5">
+          <Wallet className="w-3.5 h-3.5" />
+          Refund to: <span className="font-semibold text-foreground">{returnReq.refund_method === "store_credit" ? "Store credit" : "Original payment method"}</span>
+        </p>
       )}
 
       {returnReq.refund_amount && returnReq.status === "refunded" && (
         <p className="text-sm font-bold text-[hsl(var(--success))]">
           Refunded: <TakaSign />{parseFloat(returnReq.refund_amount).toLocaleString()}
+          {returnReq.refund_method === "store_credit" && (
+            <Link to="/wallet" className="ml-2 text-xs font-semibold text-primary hover:underline">View in wallet →</Link>
+          )}
         </p>
       )}
 
       {returnReq.admin_note && (
         <div className="mt-2 p-2 bg-muted/50 rounded-lg">
-          <p className="text-xs text-muted-foreground"><span className="font-medium">Note:</span> {returnReq.admin_note}</p>
+          <p className="text-xs text-muted-foreground"><span className="font-medium">Seller note:</span> {returnReq.admin_note}</p>
         </div>
       )}
 

@@ -140,7 +140,7 @@ export function AdminLayout() {
                 onClick={() => navigate("/settings")}
                 className="flex items-center gap-2.5 rounded-lg py-1.5 pl-1.5 pr-3 transition-colors hover:bg-muted"
               >
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 text-[11px] font-bold text-white shadow-sm">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-[hsl(24_90%_58%)] text-[11px] font-bold text-primary-foreground shadow-sm">
                   {(user?.username || user?.email || "A").charAt(0).toUpperCase()}
                 </div>
                 <div className="hidden text-left sm:block">

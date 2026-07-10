@@ -31,6 +31,9 @@ class CartItem(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)
     selected = models.BooleanField(default=True)
+    # "Save for later": the item stays in the cart but is excluded from
+    # selection/checkout until moved back.
+    saved_for_later = models.BooleanField(default=False)
     
     # Variant information
     color = models.CharField(max_length=50, blank=True, null=True)

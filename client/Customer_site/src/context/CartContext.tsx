@@ -8,6 +8,7 @@ export interface CartItem {
   product: Product;
   quantity: number;
   selected: boolean;
+  savedForLater?: boolean;
   color?: string;
   size?: string;
   shippingType?: string;
@@ -28,6 +29,7 @@ interface CartContextType {
   updateQuantity: (itemId: number, qty: number) => Promise<void>;
   toggleSelect: (itemId: number) => Promise<void>;
   selectAll: (selected: boolean) => Promise<void>;
+  setSavedForLater: (itemId: number, saved: boolean) => Promise<void>;
   clearCart: () => Promise<void>;
   totalItems: number;
   totalPrice: number;
@@ -111,6 +113,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
         product: normalizeProduct(item.product),
         quantity: item.quantity,
         selected: item.selected,
+        savedForLater: Boolean(item.saved_for_later),
         color: item.color || undefined,
         size: item.size || undefined,
         shippingType: item.shipping_type || undefined,
@@ -209,6 +212,21 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const setSavedForLater = async (itemId: number, saved: boolean) => {
+    if (!user) return;
+
+    try {
+      await api.patch('/cart/update_item/', {
+        item_id: itemId,
+        saved_for_later: saved,
+      });
+      await fetchCart();
+    } catch (error) {
+      console.error('Failed to update saved-for-later:', error);
+      throw error;
+    }
+  };
+
   const clearCart = async () => {
     if (!user) return;
 
@@ -225,21 +243,23 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     await fetchCart();
   };
 
-  const totalItems = items.reduce((s, i) => s + i.quantity, 0);
-  const totalPrice = items.reduce((s, i) => s + i.product.price * i.quantity, 0);
-  const selectedItems = items.filter((i) => i.selected);
+  const activeItems = items.filter((i) => !i.savedForLater);
+  const totalItems = activeItems.reduce((s, i) => s + i.quantity, 0);
+  const totalPrice = activeItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
+  const selectedItems = activeItems.filter((i) => i.selected);
   const selectedTotal = selectedItems.reduce((s, i) => s + i.product.price * i.quantity, 0);
   const selectedCount = selectedItems.reduce((s, i) => s + i.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ 
-      items, 
-      addToCart, 
-      removeFromCart, 
-      updateQuantity, 
-      toggleSelect, 
-      selectAll, 
-      clearCart, 
+    <CartContext.Provider value={{
+      items,
+      addToCart,
+      removeFromCart,
+      updateQuantity,
+      toggleSelect,
+      selectAll,
+      setSavedForLater,
+      clearCart,
       totalItems, 
       totalPrice, 
       selectedItems, 

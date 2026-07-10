@@ -29,6 +29,7 @@ const ReturnRequest = () => {
   const [selectedItems, setSelectedItems] = useState<Record<number, number>>({});
   const [reason, setReason] = useState("");
   const [description, setDescription] = useState("");
+  const [refundMethod, setRefundMethod] = useState<"original" | "store_credit">("original");
 
   // Calculate available quantities for each item
   const itemAvailability = useMemo(() => {
@@ -57,7 +58,7 @@ const ReturnRequest = () => {
     return availability;
   }, [order, existingReturns]);
 
-  if (!order || order.status !== "delivered") {
+  if (!order || !["delivered", "completed"].includes(order.status)) {
     return (
       <div className="min-h-screen bg-background">
         <SiteHeader />
@@ -103,6 +104,7 @@ const ReturnRequest = () => {
         order_id: order.order_id,
         reason,
         description: description.trim(),
+        refund_method: refundMethod,
         items: Object.entries(selectedItems).map(([id, qty]) => ({
           order_item_id: Number(id),
           quantity: qty,
@@ -241,6 +243,30 @@ const ReturnRequest = () => {
                 <span className="text-sm">{r}</span>
               </label>
             ))}
+          </div>
+        </div>
+
+        {/* Refund type */}
+        <div className="bg-card rounded-xl border border-border p-4 sm:p-5 mb-4">
+          <h3 className="font-bold mb-1">Refund type</h3>
+          <p className="text-xs text-muted-foreground mb-3">How would you like your money back if approved?</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setRefundMethod("original")}
+              className={`p-3 rounded-lg border-2 text-left transition-all ${refundMethod === "original" ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground"}`}
+            >
+              <span className="text-sm font-semibold block">Original method</span>
+              <span className="text-[11px] text-muted-foreground">Back to how you paid</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRefundMethod("store_credit")}
+              className={`p-3 rounded-lg border-2 text-left transition-all ${refundMethod === "store_credit" ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground"}`}
+            >
+              <span className="text-sm font-semibold block">Store credit</span>
+              <span className="text-[11px] text-muted-foreground">Instant to your wallet</span>
+            </button>
           </div>
         </div>
 

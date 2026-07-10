@@ -46,12 +46,16 @@ export default function Products() {
 
   if (isLoading) return <div className="p-8 text-center text-muted-foreground">Loading products...</div>;
 
+  const activeCount = products.filter((p) => p.status === "Active").length;
+  const outCount = products.filter((p) => p.status === "Out of Stock").length;
+  const draftCount = products.filter((p) => p.status === "Draft").length;
+
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="page-header !mb-0">
           <h1>Products</h1>
-          <p>{products.length} total products</p>
+          <p>{products.length} total products in your catalog</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="rounded-lg">
@@ -64,6 +68,26 @@ export default function Products() {
             <Plus className="h-4 w-4 mr-1.5" /> Add Product
           </Button>
         </div>
+      </div>
+
+      {/* Product KPI strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          { label: "Total", value: products.length, tone: "bg-primary/10 text-primary", icon: Package },
+          { label: "Active", value: activeCount, tone: "bg-success/10 text-success", icon: TrendingUp },
+          { label: "Drafts", value: draftCount, tone: "bg-warning/10 text-warning", icon: Edit },
+          { label: "Out of Stock", value: outCount, tone: "bg-destructive/10 text-destructive", icon: X },
+        ].map((s) => (
+          <div key={s.label} className="stat-card flex items-center gap-3">
+            <div className={`rounded-xl p-2.5 ${s.tone}`}>
+              <s.icon className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="text-xl font-bold leading-tight">{s.value}</p>
+              <p className="text-[11px] text-muted-foreground">{s.label}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">

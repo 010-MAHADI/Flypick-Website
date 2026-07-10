@@ -1,32 +1,47 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Package, Copy, ArrowUpDown, RotateCcw, XCircle, CreditCard, Loader2, Check } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Package, Copy, ArrowUpDown, RotateCcw, XCircle, CreditCard, Loader2, Check, Wallet, FileText, Repeat } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useOrders, Order } from "@/context/OrderContext";
+import { useCart } from "@/context/CartContext";
 import { toast } from "sonner";
 import TakaSign from "@/components/TakaSign";
 import api from "@/lib/api";
 
+// Tabs group the full lifecycle into customer-friendly stages
 const STATUS_TABS = [
-  { key: "all", label: "All" },
-  { key: "pending", label: "Pending" },
-  { key: "processing", label: "Processing" },
-  { key: "shipped", label: "Shipped" },
-  { key: "delivered", label: "Delivered" },
-  { key: "cancelled", label: "Cancelled" },
+  { key: "all", label: "All", statuses: [] as string[] },
+  { key: "pending", label: "Pending", statuses: ["pending", "confirmed"] },
+  { key: "processing", label: "Processing", statuses: ["processing", "packed"] },
+  { key: "shipped", label: "Shipped", statuses: ["shipped", "out_for_delivery"] },
+  { key: "delivered", label: "Delivered", statuses: ["delivered", "completed"] },
+  { key: "cancelled", label: "Cancelled", statuses: ["cancelled", "failed", "returned", "refunded"] },
 ] as const;
 
 type TabKey = typeof STATUS_TABS[number]["key"];
 
 const STATUS_STYLES: Record<string, string> = {
   pending: "bg-amber-500/12 text-amber-600",
+  confirmed: "bg-teal-500/12 text-teal-600",
   processing: "bg-primary/10 text-primary",
+  packed: "bg-primary/10 text-primary",
   shipped: "bg-blue-500/12 text-blue-600",
+  out_for_delivery: "bg-blue-500/12 text-blue-600",
   delivered: "bg-success/15 text-success",
+  completed: "bg-success/15 text-success",
   cancelled: "bg-destructive/10 text-destructive",
+  failed: "bg-destructive/10 text-destructive",
+  returned: "bg-secondary/15 text-secondary",
   refunded: "bg-muted text-muted-foreground",
 };
+
+const STATUS_LABELS: Record<string, string> = {
+  out_for_delivery: "Out for delivery",
+};
+
+// Statuses a customer may still cancel from (mirrors the backend rule)
+const CANCELLABLE = ["pending", "confirmed"];
 
 const PAYMENT_LABELS: Record<string, string> = {
   cod: "COD",
@@ -44,8 +59,10 @@ const Orders = () => {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [cancellingOrder, setCancellingOrder] = useState<string | null>(null);
 
+  const tabStatuses = (key: TabKey) => STATUS_TABS.find((t) => t.key === key)?.statuses || [];
+
   const filteredOrders = orders
-    .filter((o) => activeTab === "all" || o.status === activeTab)
+    .filter((o) => activeTab === "all" || tabStatuses(activeTab).includes(o.status))
     .sort((a, b) => {
       const dA = new Date(a.created_at).getTime();
       const dB = new Date(b.created_at).getTime();
@@ -53,7 +70,7 @@ const Orders = () => {
     });
 
   const getTabCount = (key: TabKey) =>
-    key === "all" ? orders.length : orders.filter((o) => o.status === key).length;
+    key === "all" ? orders.length : orders.filter((o) => tabStatuses(key).includes(o.status)).length;
 
   const handleCopyId = (id: string) => {
     navigator.clipboard.writeText(id);
@@ -61,10 +78,11 @@ const Orders = () => {
   };
 
   const handleCancelOrder = async (orderId: string) => {
-    if (!confirm("Are you sure you want to cancel this order? This action cannot be undone.")) return;
+    const reason = prompt("Why are you cancelling this order? (optional)");
+    if (reason === null) return; // user pressed Cancel in the dialog
     setCancellingOrder(orderId);
     try {
-      const success = await cancelOrder(orderId);
+      const success = await cancelOrder(orderId, reason.trim() || undefined);
       if (success) toast.success("Order cancelled successfully");
       else toast.error("Failed to cancel order. Please try again.");
     } catch {
@@ -78,11 +96,16 @@ const Orders = () => {
     <div className="min-h-screen bg-background">
       <SiteHeader />
       <main className="max-w-[980px] mx-auto px-3 sm:px-4 py-3 sm:py-6 pb-mobile-nav md:pb-10">
-        <div className="flex items-center justify-between mb-3 sm:mb-5">
+        <div className="flex items-center justify-between mb-3 sm:mb-5 gap-2">
           <h1 className="text-xl sm:text-2xl font-extrabold">My Orders</h1>
-          <Link to="/returns" className="chip !py-2">
-            <RotateCcw className="w-3.5 h-3.5" /> Returns
-          </Link>
+          <div className="flex gap-2">
+            <Link to="/wallet" className="chip !py-2">
+              <Wallet className="w-3.5 h-3.5" /> Wallet
+            </Link>
+            <Link to="/returns" className="chip !py-2">
+              <RotateCcw className="w-3.5 h-3.5" /> Returns
+            </Link>
+          </div>
         </div>
 
         {/* Status chips */}
@@ -185,6 +208,39 @@ const OrderCard = ({
   cancellingOrder: string | null;
 }) => {
   const [retrying, setRetrying] = useState(false);
+  const [reordering, setReordering] = useState(false);
+  const { refreshCart } = useCart();
+  const navigate = useNavigate();
+
+  const handleReorder = async () => {
+    setReordering(true);
+    try {
+      let added = 0;
+      for (const item of order.items) {
+        try {
+          await api.post("/cart/add/", {
+            product_id: item.product,
+            quantity: item.quantity,
+            color: item.color || "",
+            size: item.size || "",
+            shipping_type: item.shipping_type || "",
+          });
+          added += 1;
+        } catch {
+          /* product may no longer exist — skip it */
+        }
+      }
+      await refreshCart();
+      if (added > 0) {
+        toast.success(`${added} item(s) added to your cart`);
+        navigate("/cart");
+      } else {
+        toast.error("These products are no longer available.");
+      }
+    } finally {
+      setReordering(false);
+    }
+  };
 
   const handleCompletePayment = async () => {
     setRetrying(true);
@@ -211,8 +267,13 @@ const OrderCard = ({
       {/* Header row */}
       <div className="px-4 pt-3.5 pb-2.5 flex items-center gap-2 flex-wrap border-b border-border/60">
         <span className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full capitalize ${statusStyle}`}>
-          {order.status}
+          {STATUS_LABELS[order.status] || order.status}
         </span>
+        {order.tracking_number && (
+          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-muted text-muted-foreground">
+            {order.courier_name ? `${order.courier_name} · ` : ""}{order.tracking_number}
+          </span>
+        )}
         {order.payment_method === "uddoktapay" && (
           <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
             order.payment_status === "paid" ? "bg-success/15 text-success" : "bg-secondary/15 text-secondary"
@@ -287,7 +348,7 @@ const OrderCard = ({
           </button>
         )}
 
-        {order.status === "pending" && order.payment_status !== "paid" && (
+        {CANCELLABLE.includes(order.status) && (
           <button
             onClick={() => onCancelOrder(order.order_id)}
             disabled={cancellingOrder === order.order_id}
@@ -302,7 +363,7 @@ const OrderCard = ({
           </button>
         )}
 
-        {(order.status === "processing" || order.status === "shipped") && (
+        {["confirmed", "processing", "packed", "shipped", "out_for_delivery"].includes(order.status) && (
           <Link
             to={`/track-order/${order.order_id}`}
             className="flex-1 text-center text-[13px] font-bold py-2.5 rounded-full bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
@@ -318,6 +379,24 @@ const OrderCard = ({
             <Check className="w-3.5 h-3.5" /> Write Review
           </Link>
         )}
+        {["delivered", "completed", "cancelled", "refunded", "returned"].includes(order.status) && (
+          <button
+            onClick={handleReorder}
+            disabled={reordering}
+            className="flex-1 text-center text-[13px] font-bold py-2.5 rounded-full border border-border text-foreground/80 hover:border-primary/40 hover:text-primary transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+          >
+            {reordering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Repeat className="w-3.5 h-3.5" />}
+            Reorder
+          </button>
+        )}
+        <Link
+          to={`/invoice/${order.order_id}`}
+          className="w-11 flex items-center justify-center rounded-full border border-border text-foreground/70 hover:border-primary/40 hover:text-primary transition-colors flex-shrink-0"
+          title="View invoice"
+          aria-label="View invoice"
+        >
+          <FileText className="w-4 h-4" />
+        </Link>
       </div>
     </div>
   );

@@ -10,7 +10,8 @@ class CartItemSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = CartItem
-        fields = ['id', 'product', 'product_id', 'quantity', 'selected', 'color', 'size', 'shipping_type', 'total_price', 'created_at', 'updated_at']
+        fields = ['id', 'product', 'product_id', 'quantity', 'selected', 'saved_for_later',
+                  'color', 'size', 'shipping_type', 'total_price', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -36,6 +37,7 @@ class AddToCartSerializer(serializers.Serializer):
 class UpdateCartItemSerializer(serializers.Serializer):
     quantity = serializers.IntegerField(required=False, min_value=0)
     selected = serializers.BooleanField(required=False)
+    saved_for_later = serializers.BooleanField(required=False)
     color = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     size = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     shipping_type = serializers.CharField(required=False, allow_blank=True, allow_null=True)

@@ -32,6 +32,8 @@ export interface Order {
     date: string;
     createdAtIso: string;
     status: "pending" | "processing" | "shipped" | "delivered" | "cancelled";
+    /** Exact backend lifecycle status (confirmed, packed, out_for_delivery, …) */
+    raw_status: string;
     payment_status: string;
     subtotal?: number;
     shipping_cost?: number;
@@ -39,14 +41,20 @@ export interface Order {
     total: number;
     paymentMethod: string;
     items: OrderItemApi[];
+    order_notes?: string;
+    delivery_instructions?: string;
+    tracking_number?: string;
+    courier_name?: string;
+    cancellation_reason?: string;
 }
 
+// The page groups the full lifecycle into 5 display buckets
 const mapStatus = (status: string): Order["status"] => {
     const normalized = (status || "").toLowerCase();
-    if (normalized === "completed" || normalized === "delivered") return "delivered";
-    if (normalized === "shipped") return "shipped";
-    if (normalized === "processing") return "processing";
-    if (normalized === "cancelled") return "cancelled";
+    if (["delivered", "completed"].includes(normalized)) return "delivered";
+    if (["shipped", "out_for_delivery"].includes(normalized)) return "shipped";
+    if (["confirmed", "processing", "packed"].includes(normalized)) return "processing";
+    if (["cancelled", "failed", "returned", "refunded"].includes(normalized)) return "cancelled";
     return "pending";
 };
 
@@ -92,6 +100,12 @@ export const useOrders = (shopId?: string | number) => {
                         date: new Date(order.created_at).toLocaleDateString(),
                         createdAtIso: order.created_at || new Date().toISOString(),
                         status: mapStatus(order.status),
+                        raw_status: order.status || "pending",
+                        order_notes: order.order_notes || "",
+                        delivery_instructions: order.delivery_instructions || "",
+                        tracking_number: order.tracking_number || "",
+                        courier_name: order.courier_name || "",
+                        cancellation_reason: order.cancellation_reason || "",
                         payment_status: order.payment_status || "pending",
                         subtotal: parseFloat(order.subtotal) || 0,
                         shipping_cost: parseFloat(order.shipping_cost) || 0,
@@ -122,33 +136,90 @@ export const useUpdateOrderStatus = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async ({ orderApiId, status }: { orderApiId: number | string; status: string }) => {
-            console.log('Updating order status:', { orderApiId, status, type: typeof orderApiId });
-            
-            // Ensure we're using the correct ID format
+        mutationFn: async ({
+            orderApiId,
+            status,
+            note,
+            trackingNumber,
+            courierName,
+        }: {
+            orderApiId: number | string;
+            status: string;
+            note?: string;
+            trackingNumber?: string;
+            courierName?: string;
+        }) => {
             const id = typeof orderApiId === 'string' ? orderApiId : String(orderApiId);
-            console.log('Using ID for API call:', id);
-            
-            // Convert status to lowercase to match backend expectations
-            const normalizedStatus = status.toLowerCase();
-            console.log('Normalized status:', normalizedStatus);
-            
-            const response = await api.patch(`/orders/orders/${id}/`, {
-                status: normalizedStatus
-            });
-            console.log('Order status update response:', response.data);
+            const payload: Record<string, string> = { status: status.toLowerCase() };
+            if (note) payload.note = note;
+            if (trackingNumber) payload.tracking_number = trackingNumber;
+            if (courierName) payload.courier_name = courierName;
+
+            // The lifecycle endpoint validates transitions, writes the audit
+            // trail and notifies the customer.
+            const response = await api.post(`/orders/orders/${id}/update_status/`, payload);
             return response.data;
         },
-        onSuccess: (data, variables) => {
-            console.log('Order status update successful:', { data, variables });
-            // Invalidate and refetch orders
+        onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['admin_orders'] });
         },
-        onError: (error: any, variables) => {
-            console.error('Failed to update order status:', error);
-            console.error('Variables used:', variables);
-            console.error('Error details:', error.response?.data);
-            console.error('Error status:', error.response?.status);
-        }
+    });
+};
+
+/** Record an offline payment (COD collected, etc.) — persists server-side. */
+export const useMarkOrderPaid = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ orderApiId, paymentMethod, note }: { orderApiId: number | string; paymentMethod: string; note?: string }) => {
+            const response = await api.post(`/orders/orders/${orderApiId}/mark_paid/`, {
+                payment_method: paymentMethod,
+                note: note || '',
+            });
+            return response.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['admin_orders'] });
+        },
+    });
+};
+
+export interface RefundApi {
+    id: number;
+    refund_id: string;
+    order_id: string;
+    amount: string;
+    refund_type: string;
+    method: string;
+    status: string;
+    reason: string;
+    created_at: string;
+}
+
+/** Refund cases for the seller's/admin's orders. */
+export const useRefunds = () => {
+    return useQuery({
+        queryKey: ['seller_refunds'],
+        queryFn: async (): Promise<RefundApi[]> => {
+            const response = await api.get('/orders/refunds/');
+            const data = response.data?.results ?? response.data;
+            return Array.isArray(data) ? data : [];
+        },
+    });
+};
+
+/** Seller/admin processes a refund (full or partial) — moves money now. */
+export const useProcessRefund = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ orderId, reason, method, amount }: { orderId: string; reason: string; method: string; amount?: number }) => {
+            const payload: Record<string, unknown> = { order_id: orderId, reason, method };
+            if (amount !== undefined) payload.amount = amount;
+            const response = await api.post('/orders/refunds/', payload);
+            return response.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['admin_orders'] });
+            queryClient.invalidateQueries({ queryKey: ['seller_refunds'] });
+        },
     });
 };

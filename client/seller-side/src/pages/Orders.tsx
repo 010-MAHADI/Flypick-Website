@@ -24,7 +24,7 @@ import {
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { ReceiptOrder, SenderDetails } from "@/lib/receiptUtils";
 import { toast } from "sonner";
-import { useOrders, useUpdateOrderStatus } from "@/hooks/useOrders";
+import { useOrders, useUpdateOrderStatus, useMarkOrderPaid, useRefunds, useProcessRefund } from "@/hooks/useOrders";
 import { useAuth } from "@/context/AuthContext";
 import { useShop } from "@/context/ShopContext";
 import { useReturns, useUpdateReturnStatus } from "@/hooks/useReturns";
@@ -93,6 +93,11 @@ interface Order {
   deadlineDate: string;
   createdAt: string;
   refunds?: RefundRecord[];
+  /** Exact backend lifecycle status (confirmed, packed, out_for_delivery, …) */
+  rawStatus?: string;
+  deliveryInstructions?: string;
+  courierName?: string;
+  cancellationReason?: string;
 }
 
 type DocumentVariant = "standard" | "post_office";
@@ -296,6 +301,7 @@ interface RefundDialogState {
   description: string;
   refundAmount: string;
   selectedItems: Record<number, boolean>;
+  method: "original" | "store_credit";
 }
 
 const REFUND_REASONS = [
@@ -835,6 +841,9 @@ export default function Orders() {
   const selectedShopId = currentShop?.id ? Number(currentShop.id) : undefined;
   const { data: fetchedOrders, isLoading } = useOrders(selectedShopId);
   const updateOrderStatus = useUpdateOrderStatus();
+  const markOrderPaid = useMarkOrderPaid();
+  const processRefund = useProcessRefund();
+  const { data: refundCases = [] } = useRefunds();
   const { data: returnRequests } = useReturns(selectedShopId);
   const updateReturnStatus = useUpdateReturnStatus();
   const [orders, setOrders] = useState(defaultOrders);
@@ -913,6 +922,12 @@ export default function Orders() {
           trackingUpdates: [],
           deadlineDate: "2026-12-31",
           createdAt: o.createdAtIso || new Date().toISOString(),
+          rawStatus: o.raw_status,
+          notes: o.order_notes || undefined,
+          deliveryInstructions: o.delivery_instructions || undefined,
+          trackingNumber: o.tracking_number || undefined,
+          courierName: o.courier_name || undefined,
+          cancellationReason: o.cancellation_reason || undefined,
         };
       }) as Order[];
       setOrders(mappedOrders);
@@ -927,7 +942,7 @@ export default function Orders() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [trackingMessage, setTrackingMessage] = useState("");
-  const [trackingStatus, setTrackingStatus] = useState<Order["status"] | "Note">("Note");
+  const [trackingStatus, setTrackingStatus] = useState<string>("Note");
   const [trackingNumberInput, setTrackingNumberInput] = useState("");
 
   // Dialog states
@@ -938,7 +953,7 @@ export default function Orders() {
     open: false, orderId: "", paymentMethod: "", description: "",
   });
   const [refundDialog, setRefundDialog] = useState<RefundDialogState>({
-    open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {},
+    open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {}, method: "original",
   });
   const [documentDialog, setDocumentDialog] = useState<DocumentDialogState>({
     open: false,
@@ -1066,6 +1081,8 @@ export default function Orders() {
       const result = await updateOrderStatus.mutateAsync({
         orderApiId: targetOrder.apiId,
         status: targetStatus,
+        note: message.trim(),
+        trackingNumber: trackingNumber.trim() || undefined,
       });
       console.log('Status update successful:', result);
     } catch (error: any) {
@@ -1109,12 +1126,27 @@ export default function Orders() {
     setPaymentDialog({ open: true, orderId, paymentMethod: "", description: "" });
   };
 
-  const confirmPayment = () => {
+  const confirmPayment = async () => {
     const { orderId, paymentMethod, description } = paymentDialog;
     if (!paymentMethod) {
       toast.error("Please select a payment method");
       return;
     }
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
+
+    // Persist to the backend so the paid status survives a refresh
+    try {
+      await markOrderPaid.mutateAsync({
+        orderApiId: order.apiId,
+        paymentMethod,
+        note: description.trim(),
+      });
+    } catch (error: any) {
+      toast.error(error?.response?.data?.detail || "Failed to mark order as paid");
+      return;
+    }
+
     const update: TrackingUpdate = {
       status: "Note",
       message: `Payment received via ${paymentMethod}${description ? ` — ${description}` : ""}`,
@@ -1141,15 +1173,17 @@ export default function Orders() {
 
   // Refund/Return system
   const openRefundDialog = (orderId: string) => {
-    setRefundDialog({ open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {} });
+    setRefundDialog({ open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {}, method: "original" });
     // Small delay to reset then open
     setTimeout(() => {
-      setRefundDialog({ open: true, orderId, type: "full", reason: "", description: "", refundAmount: "", selectedItems: {} });
+      setRefundDialog({ open: true, orderId, type: "full", reason: "", description: "", refundAmount: "", selectedItems: {}, method: "original" });
     }, 10);
   };
 
-  const confirmRefund = () => {
-    const { orderId, type, reason, description, refundAmount, selectedItems } = refundDialog;
+  const [processingRefund, setProcessingRefund] = useState(false);
+
+  const confirmRefund = async () => {
+    const { orderId, type, reason, description, refundAmount } = refundDialog;
     if (!reason) {
       toast.error("Please select a reason");
       return;
@@ -1157,35 +1191,54 @@ export default function Orders() {
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
+    if (order.payment !== "Paid" && order.payment !== "Partially Refunded") {
+      toast.error("Only paid orders can be refunded. Mark the order as paid first.");
+      return;
+    }
+
     const amount = type === "full" ? order.amount : parseFloat(refundAmount) || 0;
     if (type === "partial" && (amount <= 0 || amount > order.amount)) {
       toast.error("Please enter a valid refund amount");
       return;
     }
 
-    const selectedItemsList = type === "partial"
-      ? order.items.filter((_, i) => selectedItems[i]).map(item => ({ name: item.name, qty: item.qty }))
-      : undefined;
+    const method = refundDialog.method || "original";
+    const fullReason = description.trim() ? `${reason}: ${description.trim()}` : reason;
 
+    setProcessingRefund(true);
+    let result: { status?: string } = {};
+    try {
+      // The backend creates + approves + completes the refund and moves the
+      // money (store credit / mark refunded) — the source of truth.
+      result = await processRefund.mutateAsync({
+        orderId: order.id,
+        reason: fullReason,
+        method,
+        amount: type === "partial" ? amount : undefined,
+      });
+    } catch (error: any) {
+      toast.error(error?.response?.data?.detail || "Failed to process refund");
+      setProcessingRefund(false);
+      return;
+    }
+    setProcessingRefund(false);
+
+    const newPayment = type === "full" ? "Refunded" as const : "Partially Refunded" as const;
+    const trackingUpdate: TrackingUpdate = {
+      status: "Refund",
+      message: `${type === "full" ? "Full" : "Partial"} refund of $${amount.toFixed(2)} — ${fullReason} (${method === "store_credit" ? "store credit" : "original method"})`,
+      date: todayStr,
+      time: timeStr,
+    };
     const refundRecord: RefundRecord = {
-      id: `RF-${Date.now().toString(36).toUpperCase()}`,
+      id: (result as any).refund_id || `RF-${Date.now().toString(36).toUpperCase()}`,
       type,
       reason,
       description: description.trim(),
       amount,
-      items: selectedItemsList,
-      status: "Pending",
+      status: "Completed",
       date: todayStr,
     };
-
-    const trackingUpdate: TrackingUpdate = {
-      status: "Refund",
-      message: `${type === "full" ? "Full" : "Partial"} refund of $${amount.toFixed(2)} initiated — ${reason}${description ? `: ${description}` : ""}`,
-      date: todayStr,
-      time: timeStr,
-    };
-
-    const newPayment = type === "full" ? "Refunded" as const : "Partially Refunded" as const;
 
     setOrders((prev) => prev.map((o) => o.id === orderId ? {
       ...o,
@@ -1201,46 +1254,63 @@ export default function Orders() {
         trackingUpdates: [...prev.trackingUpdates, trackingUpdate],
       } : null);
     }
-    toast.success(`Refund of $${amount.toFixed(2)} initiated for ${orderId}`);
-    setRefundDialog({ open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {} });
+    toast.success(`Refund of $${amount.toFixed(2)} processed for ${orderId}`);
+    setRefundDialog({ open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {}, method: "original" });
   };
 
-  const updateRefundStatus = (orderId: string, refundId: string, newStatus: RefundRecord["status"]) => {
-    setOrders((prev) => prev.map((o) => o.id === orderId ? {
-      ...o,
-      refunds: o.refunds?.map(r => r.id === refundId ? { ...r, status: newStatus } : r),
-    } : o));
-    if (selectedOrder?.id === orderId) {
-      setSelectedOrder((prev) => prev ? {
-        ...prev,
-        refunds: prev.refunds?.map(r => r.id === refundId ? { ...r, status: newStatus } : r),
-      } : null);
-    }
-    toast.success(`Refund ${refundId} marked as ${newStatus}`);
+  // Display bucket for the fine-grained lifecycle statuses
+  const bucketForRaw = (raw: string): Order["status"] => {
+    if (["delivered", "completed"].includes(raw)) return "delivered";
+    if (["shipped", "out_for_delivery"].includes(raw)) return "shipped";
+    if (["confirmed", "processing", "packed"].includes(raw)) return "processing";
+    if (["cancelled", "failed", "returned", "refunded"].includes(raw)) return "cancelled";
+    return "pending";
   };
 
-  const addTrackingUpdate = () => {
+  const addTrackingUpdate = async () => {
     if (!selectedOrder || !trackingMessage.trim()) return;
+
+    const isStatusChange = trackingStatus !== "Note";
+    const newTracking = trackingNumberInput.trim() || selectedOrder.trackingNumber;
+
+    // Status changes persist through the lifecycle API so the customer's
+    // Track Order timeline shows the update too.
+    if (isStatusChange) {
+      try {
+        await updateOrderStatus.mutateAsync({
+          orderApiId: selectedOrder.apiId,
+          status: trackingStatus,
+          note: trackingMessage.trim(),
+          trackingNumber: trackingNumberInput.trim() || undefined,
+        });
+      } catch (error: any) {
+        const errorMessage =
+          error?.response?.data?.status?.[0] ||
+          error?.response?.data?.detail ||
+          "Failed to update order status";
+        toast.error(errorMessage);
+        return;
+      }
+    }
+
+    const newBucket = isStatusChange ? bucketForRaw(trackingStatus) : selectedOrder.status;
     const update: TrackingUpdate = {
-      status: trackingStatus,
+      status: isStatusChange ? newBucket : "Note",
       message: trackingMessage.trim(),
       date: todayStr,
       time: timeStr,
     };
 
-    const newStatus = trackingStatus !== "Note" ? trackingStatus as Order["status"] : selectedOrder.status;
-    const newTracking = trackingNumberInput.trim() || selectedOrder.trackingNumber;
-
     setOrders((prev) => prev.map((o) =>
       o.id === selectedOrder.id
-        ? { ...o, status: newStatus, trackingUpdates: [...o.trackingUpdates, update], trackingNumber: newTracking }
+        ? { ...o, status: newBucket, rawStatus: isStatusChange ? trackingStatus : o.rawStatus, trackingUpdates: [...o.trackingUpdates, update], trackingNumber: newTracking }
         : o
     ));
     setSelectedOrder((prev) =>
-      prev ? { ...prev, status: newStatus, trackingUpdates: [...prev.trackingUpdates, update], trackingNumber: newTracking } : null
+      prev ? { ...prev, status: newBucket, rawStatus: isStatusChange ? trackingStatus : prev.rawStatus, trackingUpdates: [...prev.trackingUpdates, update], trackingNumber: newTracking } : null
     );
 
-    toast.success(trackingStatus === "Note" ? "Tracking note added" : `Order updated to ${trackingStatus}`);
+    toast.success(trackingStatus === "Note" ? "Tracking note added" : `Order updated to ${trackingStatus.replace(/_/g, " ")}`);
     setTrackingMessage("");
     setTrackingStatus("Note");
     setTrackingNumberInput("");
@@ -1592,55 +1662,43 @@ export default function Orders() {
               </div>
             )}
 
-            {/* Refund Records */}
-            {orderForRefund.refunds && orderForRefund.refunds.length > 0 && (
-              <div className="stat-card space-y-4">
-                <h2 className="section-title flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" /> Returns & Refunds</h2>
-                <div className="space-y-3">
-                  {orderForRefund.refunds.map((refund) => (
-                    <div key={refund.id} className="p-4 rounded-xl bg-muted/30 border border-border/40 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-bold">{refund.id}</span>
-                          <Badge variant={
-                            refund.status === "Completed" ? "default" :
-                              refund.status === "Approved" ? "secondary" :
-                                refund.status === "Rejected" ? "destructive" : "outline"
-                          } className="text-[10px]">
-                            {refund.status}
-                          </Badge>
-                          <Badge variant="outline" className="text-[10px] capitalize">{refund.type} refund</Badge>
+            {/* Refund cases (from the backend — the source of truth) */}
+            {(() => {
+              const orderRefunds = refundCases.filter((r) => r.order_id === selectedOrder.id);
+              if (orderRefunds.length === 0) return null;
+              const refundStatusVariant: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+                completed: "default", approved: "secondary", processing: "secondary",
+                rejected: "destructive", requested: "outline", under_review: "outline",
+              };
+              return (
+                <div className="stat-card space-y-4">
+                  <h2 className="section-title flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" /> Refunds</h2>
+                  <div className="space-y-3">
+                    {orderRefunds.map((refund) => (
+                      <div key={refund.id} className="p-4 rounded-xl bg-muted/30 border border-border/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-bold">{refund.refund_id}</span>
+                            <Badge variant={refundStatusVariant[refund.status] || "outline"} className="text-[10px] capitalize">
+                              {refund.status.replace(/_/g, " ")}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] capitalize">{refund.refund_type} refund</Badge>
+                            <Badge variant="outline" className="text-[10px]">
+                              {refund.method === "store_credit" ? "Store credit" : refund.method === "manual" ? "Manual" : "Original method"}
+                            </Badge>
+                          </div>
+                          <span className="font-bold text-sm text-destructive">-${parseFloat(refund.amount).toFixed(2)}</span>
                         </div>
-                        <span className="font-bold text-sm text-destructive">-${refund.amount.toFixed(2)}</span>
-                      </div>
-                      <div className="text-xs space-y-1">
-                        <p><span className="text-muted-foreground">Reason:</span> <span className="font-medium">{refund.reason}</span></p>
-                        {refund.description && <p><span className="text-muted-foreground">Details:</span> {refund.description}</p>}
-                        {refund.items && refund.items.length > 0 && (
-                          <p><span className="text-muted-foreground">Items:</span> {refund.items.map(i => `${i.name} (x${i.qty})`).join(", ")}</p>
-                        )}
-                        <p className="text-muted-foreground/60">Filed on {refund.date}</p>
-                      </div>
-                      {refund.status === "Pending" && (
-                        <div className="flex gap-2 pt-1">
-                          <Button size="sm" variant="outline" className="rounded-lg text-xs h-7" onClick={() => updateRefundStatus(selectedOrder.id, refund.id, "Approved")}>
-                            <CheckCircle className="h-3 w-3 mr-1" /> Approve
-                          </Button>
-                          <Button size="sm" variant="outline" className="rounded-lg text-xs h-7 text-destructive" onClick={() => updateRefundStatus(selectedOrder.id, refund.id, "Rejected")}>
-                            <XCircle className="h-3 w-3 mr-1" /> Reject
-                          </Button>
+                        <div className="text-xs space-y-1">
+                          {refund.reason && <p><span className="text-muted-foreground">Reason:</span> <span className="font-medium">{refund.reason}</span></p>}
+                          <p className="text-muted-foreground/60">Filed on {new Date(refund.created_at).toLocaleDateString()}</p>
                         </div>
-                      )}
-                      {refund.status === "Approved" && (
-                        <Button size="sm" className="rounded-lg text-xs h-7" onClick={() => updateRefundStatus(selectedOrder.id, refund.id, "Completed")}>
-                          <RefreshCw className="h-3 w-3 mr-1" /> Mark Completed
-                        </Button>
-                      )}
-                    </div>
-                  ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Return Requests */}
             {returnRequests && returnRequests.filter(r => r.order_id === selectedOrder.id).length > 0 && (
@@ -1776,15 +1834,19 @@ export default function Orders() {
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label className="text-xs">Status</Label>
-                    <Select value={trackingStatus} onValueChange={(v) => setTrackingStatus(v as Order["status"] | "Note")}>
+                    <Select value={trackingStatus} onValueChange={(v) => setTrackingStatus(v)}>
                       <SelectTrigger className="h-9 rounded-lg text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="Note">Note (no status change)</SelectItem>
+                        <SelectItem value="confirmed">Confirmed</SelectItem>
                         <SelectItem value="processing">Processing</SelectItem>
+                        <SelectItem value="packed">Packed</SelectItem>
                         <SelectItem value="shipped">Shipped</SelectItem>
+                        <SelectItem value="out_for_delivery">Out for Delivery</SelectItem>
                         <SelectItem value="delivered">Delivered</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1816,6 +1878,33 @@ export default function Orders() {
                   >
                     <Send className="h-3.5 w-3.5" /> Add Update
                   </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Customer notes from checkout */}
+            {(selectedOrder.notes || selectedOrder.deliveryInstructions || selectedOrder.cancellationReason) && (
+              <div className="stat-card space-y-3">
+                <h2 className="section-title flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /> Customer Notes</h2>
+                <div className="text-sm space-y-2.5">
+                  {selectedOrder.notes && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-0.5">Order note</p>
+                      <p className="bg-muted/50 rounded-lg p-2.5 text-[13px] leading-relaxed">{selectedOrder.notes}</p>
+                    </div>
+                  )}
+                  {selectedOrder.deliveryInstructions && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-0.5">Delivery instructions</p>
+                      <p className="bg-muted/50 rounded-lg p-2.5 text-[13px] leading-relaxed">{selectedOrder.deliveryInstructions}</p>
+                    </div>
+                  )}
+                  {selectedOrder.cancellationReason && (
+                    <div>
+                      <p className="text-xs font-semibold text-destructive mb-0.5">Cancellation reason</p>
+                      <p className="bg-destructive/5 rounded-lg p-2.5 text-[13px] leading-relaxed">{selectedOrder.cancellationReason}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2031,6 +2120,29 @@ export default function Orders() {
                 </>
               )}
 
+              {/* Refund method */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">Refund Method</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRefundDialog(s => ({ ...s, method: "original" }))}
+                    className={`p-3 rounded-lg border text-sm font-medium text-left transition-colors ${refundDialog.method === "original" ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}
+                  >
+                    Original method
+                    <span className="block text-[11px] font-normal text-muted-foreground">Back to how they paid</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRefundDialog(s => ({ ...s, method: "store_credit" }))}
+                    className={`p-3 rounded-lg border text-sm font-medium text-left transition-colors ${refundDialog.method === "store_credit" ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"}`}
+                  >
+                    Store credit
+                    <span className="block text-[11px] font-normal text-muted-foreground">Instant to wallet</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Reason */}
               <div className="space-y-1.5">
                 <Label className="text-sm">Reason <span className="text-destructive">*</span></Label>
@@ -2076,9 +2188,9 @@ export default function Orders() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" className="rounded-lg" onClick={() => setRefundDialog(s => ({ ...s, open: false }))}>Cancel</Button>
-              <Button variant="destructive" className="rounded-lg" onClick={confirmRefund} disabled={!refundDialog.reason}>
-                <RotateCcw className="h-4 w-4 mr-1.5" /> Process Refund
+              <Button variant="outline" className="rounded-lg" onClick={() => setRefundDialog(s => ({ ...s, open: false }))} disabled={processingRefund}>Cancel</Button>
+              <Button variant="destructive" className="rounded-lg" onClick={confirmRefund} disabled={!refundDialog.reason || processingRefund}>
+                <RotateCcw className="h-4 w-4 mr-1.5" /> {processingRefund ? "Processing…" : "Process Refund"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -2277,10 +2389,10 @@ export default function Orders() {
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "processing")}><Clock className="h-4 w-4 mr-2" /> Mark Processing</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "shipped")}><Truck className="h-4 w-4 mr-2" /> Mark Shipped</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "delivered")}><CheckCircle className="h-4 w-4 mr-2" /> Mark Delivered</DropdownMenuItem>
-                    {order.status === "delivered" && order.payment !== "Refunded" && (
+                    {(order.payment === "Paid" || order.payment === "Partially Refunded") && (
                       <>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={() => openRefundDialog(order.id)}><RotateCcw className="h-4 w-4 mr-2" /> Return / Refund</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openRefundDialog(order.id)}><RotateCcw className="h-4 w-4 mr-2" /> Process Refund</DropdownMenuItem>
                       </>
                     )}
                     <DropdownMenuSeparator />

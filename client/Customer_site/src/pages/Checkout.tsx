@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { MapPin, CreditCard, Truck, ShieldCheck, Plus, X, Tag, CheckCircle, Loader2 } from "lucide-react";
+import { MapPin, CreditCard, Truck, ShieldCheck, Plus, X, Tag, CheckCircle, Loader2, Wallet, MessageSquare } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useCart } from "@/context/CartContext";
 import { useAddress } from "@/context/AddressContext";
 import { useAuth } from "@/context/AuthContext";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
@@ -120,6 +121,17 @@ const Checkout = () => {
   const [placing, setPlacing] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethods | null>(null);
   const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(true);
+  const [orderNotes, setOrderNotes] = useState("");
+  const [deliveryInstructions, setDeliveryInstructions] = useState("");
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [useStoreCredit, setUseStoreCredit] = useState(false);
+
+  // Load store-credit balance so the customer can redeem it here
+  useEffect(() => {
+    api.get("/orders/wallet/")
+      .then((res) => setWalletBalance(parseFloat(res.data?.balance || "0")))
+      .catch(() => setWalletBalance(0));
+  }, []);
 
   const handleApplyCoupon = async () => {
     setCouponError("");
@@ -266,6 +278,9 @@ const Checkout = () => {
         shipping_country: selectedAddr!.country,
         payment_method: paymentMethod,
         coupon_code: appliedCoupon?.code || '',
+        order_notes: orderNotes.trim(),
+        delivery_instructions: deliveryInstructions.trim(),
+        use_store_credit: useStoreCredit && walletBalance > 0,
         items: checkoutItems.map((item) => ({
           product_id: item.product.id,
           quantity: item.quantity,
@@ -546,6 +561,38 @@ const Checkout = () => {
                 ))}
               </div>
             </div>
+
+            {/* Order notes & delivery instructions */}
+            <div className="border border-border rounded-xl p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <MessageSquare className="w-5 h-5 text-primary" />
+                <h3 className="text-lg font-bold">Notes <span className="text-sm font-normal text-muted-foreground">(optional)</span></h3>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs text-muted-foreground mb-1">Order Notes for the seller</Label>
+                  <Textarea
+                    value={orderNotes}
+                    onChange={(e) => setOrderNotes(e.target.value)}
+                    placeholder="e.g. Please gift wrap, color preference…"
+                    rows={2}
+                    maxLength={1000}
+                    className="text-sm"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs text-muted-foreground mb-1">Delivery Instructions</Label>
+                  <Textarea
+                    value={deliveryInstructions}
+                    onChange={(e) => setDeliveryInstructions(e.target.value)}
+                    placeholder="e.g. Call on arrival, leave with the guard…"
+                    rows={2}
+                    maxLength={1000}
+                    className="text-sm"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Order Summary Sidebar */}
@@ -636,10 +683,43 @@ const Checkout = () => {
                 )}
               </div>
 
+              {/* Store credit redemption */}
+              {walletBalance > 0 && (
+                <div className="border-t border-border pt-3 mt-3">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useStoreCredit}
+                      onChange={(e) => setUseStoreCredit(e.target.checked)}
+                      className="w-4 h-4 accent-[hsl(var(--primary))]"
+                    />
+                    <span className="flex items-center gap-1.5 text-sm font-medium flex-1">
+                      <Wallet className="w-4 h-4 text-primary" />
+                      Use store credit
+                    </span>
+                    <span className="text-xs font-bold text-success">
+                      <TakaSign />{walletBalance.toLocaleString()} available
+                    </span>
+                  </label>
+                  {useStoreCredit && (
+                    <div className="flex justify-between text-sm text-success mt-2">
+                      <span>Store credit applied</span>
+                      <span>-<TakaSign />{Math.min(walletBalance, finalTotal).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="border-t border-border pt-3 mt-3">
                 <div className="flex justify-between font-bold text-lg">
                   <span>Total</span>
-                  <span className="text-primary"><TakaSign />{finalTotal.toLocaleString()}</span>
+                  <span className="text-primary">
+                    <TakaSign />
+                    {(useStoreCredit
+                      ? Math.max(0, finalTotal - Math.min(walletBalance, finalTotal))
+                      : finalTotal
+                    ).toLocaleString()}
+                  </span>
                 </div>
                 {couponDiscount > 0 && (
                   <p className="text-xs text-success font-medium mt-0.5">You save <TakaSign />{couponDiscount.toLocaleString()}!</p>

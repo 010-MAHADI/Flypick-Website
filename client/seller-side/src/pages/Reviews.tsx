@@ -42,9 +42,9 @@ export default function Reviews() {
     () =>
       reviews.filter(
         (review) => {
-          const productName = review.product?.title || review.product_name || '';
+          const productName = (typeof review.product === "object" && review.product?.title) || review.product_name || '';
           const customerName = review.user_name || review.customer_name || '';
-          const customerEmail = review.user?.email || review.customer_email || '';
+          const customerEmail = (typeof review.user === "object" && review.user?.email) || review.customer_email || '';
           
           return (
             productName.toLowerCase().includes(search.toLowerCase()) ||
@@ -130,12 +130,12 @@ export default function Reviews() {
                 return (
                   <tr key={review.id}>
                     <td className="font-medium max-w-[180px] truncate pl-5">
-                      {review.product?.title || review.product_name || "Product"}
+                      {(typeof review.product === "object" && review.product?.title) || review.product_name || "Product"}
                     </td>
                     <td>
                       <div>
                         <p>{review.user_name || review.customer_name || "Customer"}</p>
-                        <p className="text-xs text-muted-foreground">{review.user?.email || review.customer_email || ""}</p>
+                        <p className="text-xs text-muted-foreground">{(typeof review.user === "object" && review.user?.email) || review.customer_email || ""}</p>
                       </div>
                     </td>
                     <td>

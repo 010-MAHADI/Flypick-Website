@@ -36,11 +36,27 @@ export interface Order {
   shipping_cost: string;
   discount: string;
   coupon_code: string | null;
+  store_credit_used?: string;
   total_amount: string;
   status: string;
+  order_notes?: string | null;
+  delivery_instructions?: string | null;
+  tracking_number?: string | null;
+  courier_name?: string | null;
+  estimated_delivery_date?: string | null;
+  cancellation_reason?: string | null;
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+}
+
+export interface OrderTimelineEntry {
+  id: number;
+  from_status: string;
+  to_status: string;
+  note: string;
+  changed_by_name: string;
+  created_at: string;
 }
 
 interface OrderContextType {
@@ -48,7 +64,7 @@ interface OrderContextType {
   loading: boolean;
   fetchOrders: () => Promise<void>;
   getOrder: (orderId: string) => Order | undefined;
-  cancelOrder: (orderId: string) => Promise<boolean>;
+  cancelOrder: (orderId: string, reason?: string) => Promise<boolean>;
 }
 
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
@@ -84,25 +100,25 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
     return orders.find(order => order.order_id === orderId);
   };
 
-  const cancelOrder = async (orderId: string): Promise<boolean> => {
+  const cancelOrder = async (orderId: string, reason?: string): Promise<boolean> => {
     try {
       const order = orders.find(o => o.order_id === orderId);
       if (!order) {
         throw new Error('Order not found');
       }
 
-      // Call the cancel API endpoint
-      await api.patch(`/orders/orders/${order.id}/cancel/`);
-      
+      // Call the cancel API endpoint (reason is stored + audited server-side)
+      await api.patch(`/orders/orders/${order.id}/cancel/`, { reason: reason || '' });
+
       // Update the local state
-      setOrders(prevOrders => 
-        prevOrders.map(o => 
-          o.order_id === orderId 
-            ? { ...o, status: 'cancelled' }
+      setOrders(prevOrders =>
+        prevOrders.map(o =>
+          o.order_id === orderId
+            ? { ...o, status: 'cancelled', cancellation_reason: reason || '' }
             : o
         )
       );
-      
+
       return true;
     } catch (error) {
       console.error('Failed to cancel order:', error);

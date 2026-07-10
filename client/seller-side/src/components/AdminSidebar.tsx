@@ -114,17 +114,17 @@ export function AdminSidebar() {
     <Sidebar collapsible="icon" className="border-r-0">
       <SidebarHeader className="p-4 pb-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/25">
-            <Zap className="h-4 w-4 text-white" fill="white" />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-[hsl(24_90%_58%)] shadow-lg shadow-primary/25">
+            <Zap className="h-4 w-4 text-primary-foreground" fill="currentColor" />
           </div>
           {!collapsed ? (
             <div>
-              <h2 className="text-[15px] font-bold tracking-tight text-sidebar-accent-foreground" style={{ fontFamily: "Fraunces, serif" }}>
+              <h2 className="text-[15px] font-bold tracking-tight text-sidebar-foreground" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
                 Flypick
               </h2>
               <div className="mt-0.5 flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <p className="text-[10px] font-medium uppercase tracking-wider text-sidebar-muted/70">
+                <div className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                   {isAdmin ? "Admin Center" : "Seller Center"}
                 </p>
               </div>
@@ -141,16 +141,16 @@ export function AdminSidebar() {
 
       <SidebarFooter className="space-y-1 p-3 pb-5">
         {!collapsed ? (
-          <div className="mx-1 mb-2 rounded-xl border border-sidebar-border/50 bg-sidebar-accent/50 p-3">
+          <div className="mx-1 mb-2 rounded-xl border border-sidebar-border bg-sidebar-accent/40 p-3">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/20 bg-gradient-to-br from-blue-500/20 to-blue-600/30 text-[13px] font-bold text-blue-400">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-[13px] font-bold text-primary">
                 {(user?.username || user?.email || "U").charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[12px] font-semibold text-sidebar-accent-foreground">{user?.username || "User"}</p>
+                <p className="truncate text-[12px] font-semibold text-sidebar-foreground">{user?.username || "User"}</p>
                 <div className="flex items-center gap-1">
-                  <ShieldCheck className="h-2.5 w-2.5 text-emerald-400" />
-                  <p className="text-[10px] text-sidebar-muted/70">{isAdmin ? "Administrator" : "Seller Account"}</p>
+                  <ShieldCheck className="h-2.5 w-2.5 text-success" />
+                  <p className="text-[10px] text-muted-foreground">{isAdmin ? "Administrator" : "Seller Account"}</p>
                 </div>
               </div>
             </div>
@@ -163,7 +163,7 @@ export function AdminSidebar() {
             logout();
             navigate("/auth");
           }}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-sidebar-foreground/50 transition-all hover:bg-red-500/10 hover:text-red-400"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium text-sidebar-foreground/70 transition-all hover:bg-destructive/10 hover:text-destructive"
         >
           <LogOut className="h-[17px] w-[17px] shrink-0" />
           {!collapsed ? <span>Sign Out</span> : null}

@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import OrderViewSet, PaymentMethodViewSet, ReturnRequestViewSet
+from .views import OrderViewSet, PaymentMethodViewSet, RefundViewSet, ReturnRequestViewSet, wallet_view
 from .payment_views import (
     InitiatePaymentView,
     RetryPaymentView,
@@ -14,8 +14,10 @@ router = DefaultRouter()
 router.register(r'orders', OrderViewSet, basename='order')
 router.register(r'payment-methods', PaymentMethodViewSet, basename='payment-method')
 router.register(r'returns', ReturnRequestViewSet, basename='return')
+router.register(r'refunds', RefundViewSet, basename='refund')
 
 urlpatterns = [
+    path('wallet/', wallet_view, name='wallet'),
     path('', include(router.urls)),
     # UddoktaPay payment gateway endpoints
     path('payments/initiate/', InitiatePaymentView.as_view(), name='payment-initiate'),

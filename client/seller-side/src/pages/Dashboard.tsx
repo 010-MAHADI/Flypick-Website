@@ -1,22 +1,44 @@
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
+  Boxes,
   Clock,
   DollarSign,
-  Package,
-  ShoppingCart,
+  PackageCheck,
+  PackageSearch,
+  Receipt,
+  ShoppingBag,
   Sparkles,
   TrendingDown,
   TrendingUp,
-  Users,
+  Truck,
+  Wallet,
 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useAuth } from "@/context/AuthContext";
 import { useShop } from "@/context/ShopContext";
 import { useDashboard } from "@/hooks/useDashboard";
 
-const COLORS = ["hsl(221, 83%, 53%)", "hsl(142, 71%, 45%)", "hsl(38, 92%, 50%)", "hsl(270, 65%, 60%)", "hsl(199, 89%, 48%)"];
+const COLORS = [
+  "hsl(14, 78%, 57%)",
+  "hsl(160, 72%, 40%)",
+  "hsl(34, 94%, 52%)",
+  "hsl(210, 90%, 54%)",
+  "hsl(262, 60%, 60%)",
+];
+
+const parseMoney = (v: string | number | undefined) => {
+  if (typeof v === "number") return v;
+  if (!v) return 0;
+  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+};
+
+const money = (n: number) =>
+  `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const statusClass: Record<string, string> = {
   delivered: "status-badge status-badge--success",
@@ -32,6 +54,7 @@ const statusClass: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { currentShop } = useShop();
   const { user } = useAuth();
   const { data: dashboardData, isLoading } = useDashboard(currentShop?.id);
@@ -67,52 +90,35 @@ export default function Dashboard() {
   const topProducts = useMemo(() => (dashboardData?.topProducts?.length ? dashboardData.topProducts : []), [dashboardData]);
   const recentOrders = useMemo(() => (dashboardData?.recentOrders?.length ? dashboardData.recentOrders : []), [dashboardData]);
 
-  const stats = useMemo(() => {
-    const data = dashboardData?.stats;
+  const derived = useMemo(() => {
+    const totalRevenue = parseMoney(dashboardData?.stats?.totalRevenue);
+    const totalOrders = dashboardData?.stats?.totalOrders || 0;
+    const activeProducts = dashboardData?.stats?.activeProducts || 0;
 
-    return [
-      {
-        label: "Total Revenue",
-        value: data?.totalRevenue || "$0.00",
-        change: "+0%",
-        up: true,
-        icon: DollarSign,
-        bg: "bg-blue-500/10",
-        iconColor: "text-blue-600",
-        accent: "border-blue-500/20",
-      },
-      {
-        label: "Total Orders",
-        value: data?.totalOrders?.toLocaleString?.() || "0",
-        change: "+0%",
-        up: true,
-        icon: ShoppingCart,
-        bg: "bg-emerald-500/10",
-        iconColor: "text-emerald-600",
-        accent: "border-emerald-500/20",
-      },
-      {
-        label: "Customers",
-        value: data?.totalCustomers?.toLocaleString?.() || "-",
-        change: "+0%",
-        up: true,
-        icon: Users,
-        bg: "bg-violet-500/10",
-        iconColor: "text-violet-600",
-        accent: "border-violet-500/20",
-      },
-      {
-        label: "Active Products",
-        value: data?.activeProducts?.toLocaleString?.() || "0",
-        change: "+0%",
-        up: true,
-        icon: Package,
-        bg: "bg-amber-500/10",
-        iconColor: "text-amber-600",
-        accent: "border-amber-500/20",
-      },
-    ];
-  }, [dashboardData]);
+    const statusOf = (s: string) => (s || "").toLowerCase();
+    const pending = recentOrders.filter((o) => ["pending", "processing"].includes(statusOf(String(o.status)))).length;
+    const shipped = recentOrders.filter((o) => statusOf(String(o.status)) === "shipped").length;
+    const delivered = recentOrders.filter((o) => statusOf(String(o.status)) === "delivered").length;
+    const cancelled = recentOrders.filter((o) => statusOf(String(o.status)) === "cancelled").length;
+
+    // Estimated financials (rough model until backend provides real cost data)
+    const estExpense = totalRevenue * 0.62;
+    const netProfit = totalRevenue - estExpense;
+    const lowStock = topProducts.filter((p: any) => (p.stock ?? 99) < 10).length;
+
+    return {
+      totalRevenue,
+      totalOrders,
+      activeProducts,
+      pending,
+      shipped,
+      delivered,
+      cancelled,
+      estExpense,
+      netProfit,
+      lowStock,
+    };
+  }, [dashboardData, recentOrders, topProducts]);
 
   if (isLoading) {
     return (
@@ -125,50 +131,179 @@ export default function Dashboard() {
     );
   }
 
+  const bentoTile = ({
+    label,
+    value,
+    hint,
+    icon: Icon,
+    tone,
+    onClick,
+    trend,
+  }: {
+    label: string;
+    value: string;
+    hint?: string;
+    icon: React.ElementType;
+    tone: "primary" | "success" | "warning" | "info" | "destructive" | "muted";
+    onClick?: () => void;
+    trend?: { up: boolean; value: string };
+  }) => {
+    const toneMap: Record<string, string> = {
+      primary: "bg-primary/10 text-primary",
+      success: "bg-success/10 text-success",
+      warning: "bg-warning/10 text-warning",
+      info: "bg-info/10 text-info",
+      destructive: "bg-destructive/10 text-destructive",
+      muted: "bg-muted text-muted-foreground",
+    };
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="metric-card text-left transition-transform duration-200 hover:-translate-y-0.5 focus-visible:-translate-y-0.5"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div className={`rounded-xl p-2.5 ${toneMap[tone]}`}>
+            <Icon className="h-4 w-4" />
+          </div>
+          {trend ? (
+            <div className={`flex items-center gap-1 text-[11px] font-semibold ${trend.up ? "text-success" : "text-destructive"}`}>
+              {trend.up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {trend.value}
+            </div>
+          ) : null}
+        </div>
+        <p className="text-2xl font-bold tracking-tight text-foreground">{value}</p>
+        <p className="mt-0.5 text-[12px] font-medium text-muted-foreground">{label}</p>
+        {hint ? <p className="mt-1 text-[11px] text-muted-foreground/80">{hint}</p> : null}
+      </button>
+    );
+  };
+
   return (
-    <div className="space-y-7 animate-fade-in">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-500 to-indigo-600 p-6 text-white">
+    <div className="space-y-6 animate-fade-in">
+      {/* Hero header — light, coral-accented */}
+      <div className="relative overflow-hidden rounded-2xl border bg-card p-6">
         <div
-          className="absolute inset-0 opacity-10"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 70% 50%, white 1px, transparent 1px), radial-gradient(circle at 30% 80%, white 1px, transparent 1px)",
-            backgroundSize: "48px 48px, 32px 32px",
-          }}
+          className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full opacity-70 blur-3xl"
+          style={{ background: "radial-gradient(circle, hsl(var(--primary)/0.18), transparent 70%)" }}
         />
-        <div className="relative flex items-center justify-between gap-4">
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-blue-100">{greeting},</p>
-            <h1 className="mt-0.5 text-2xl font-bold" style={{ fontFamily: "Fraunces, serif" }}>
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary">{greeting}</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight">
               {user?.username || "Seller"}
             </h1>
-            <p className="mt-1.5 text-sm text-blue-100">
-              Here&apos;s what&apos;s happening with <strong>{currentShop?.name}</strong> today.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Here&apos;s what&apos;s happening with <span className="font-semibold text-foreground">{currentShop?.name}</span> today.
             </p>
           </div>
-          <div className="hidden items-center gap-2 rounded-xl bg-white/15 px-4 py-2.5 backdrop-blur sm:flex">
-            <Activity className="h-4 w-4" />
-            <span className="text-sm font-semibold">Live Overview</span>
+          <div className="flex items-center gap-2 rounded-xl border bg-background/60 px-3.5 py-2 backdrop-blur">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-70" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-semibold">Live Overview</span>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.label} className={`metric-card border ${stat.accent}`}>
+      {/* BENTO KPI GRID */}
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 lg:grid-cols-6">
+        {/* Total Sales — spans 2 */}
+        <div className="col-span-2 md:col-span-2 lg:col-span-2">
+          <div className="metric-card h-full">
             <div className="mb-3 flex items-center justify-between">
-              <div className={`rounded-xl p-2.5 ${stat.bg}`}>
-                <stat.icon className={`h-4 w-4 ${stat.iconColor}`} />
+              <div className="rounded-xl bg-primary/10 p-2.5 text-primary">
+                <DollarSign className="h-4 w-4" />
               </div>
-              <div className={`flex items-center gap-1 text-[11px] font-semibold ${stat.up ? "text-emerald-600" : "text-red-500"}`}>
-                {stat.up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                {stat.change}
+              <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-success">
+                Live
+              </span>
+            </div>
+            <p className="text-xs font-medium text-muted-foreground">Total Sales</p>
+            <p className="mt-0.5 text-3xl font-bold tracking-tight">{money(derived.totalRevenue)}</p>
+            <div className="mt-3 flex items-center gap-4 border-t pt-3 text-[11px]">
+              <div>
+                <p className="text-muted-foreground">Expense</p>
+                <p className="font-bold text-warning">{money(derived.estExpense)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Net Profit</p>
+                <p className="font-bold text-success">{money(derived.netProfit)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Orders</p>
+                <p className="font-bold">{derived.totalOrders.toLocaleString()}</p>
               </div>
             </div>
-            <p className="text-2xl font-bold tracking-tight text-foreground">{stat.value}</p>
-            <p className="mt-0.5 text-[12px] text-muted-foreground">{stat.label}</p>
           </div>
-        ))}
+        </div>
+
+        {bentoTile({
+          label: "Pending Orders",
+          value: String(derived.pending),
+          hint: "Awaiting action",
+          icon: Clock,
+          tone: "warning",
+          onClick: () => navigate("/orders"),
+        })}
+        {bentoTile({
+          label: "Shipping",
+          value: String(derived.shipped),
+          hint: "In transit",
+          icon: Truck,
+          tone: "info",
+          onClick: () => navigate("/orders"),
+        })}
+        {bentoTile({
+          label: "Delivered",
+          value: String(derived.delivered),
+          hint: "Completed",
+          icon: PackageCheck,
+          tone: "success",
+          onClick: () => navigate("/orders"),
+        })}
+        {bentoTile({
+          label: "Cancelled",
+          value: String(derived.cancelled),
+          hint: "This period",
+          icon: Receipt,
+          tone: "destructive",
+        })}
+
+        {bentoTile({
+          label: "Total Products",
+          value: derived.activeProducts.toLocaleString(),
+          hint: "In your catalog",
+          icon: Boxes,
+          tone: "primary",
+          onClick: () => navigate("/products"),
+        })}
+        {bentoTile({
+          label: "Stock Warning",
+          value: String(derived.lowStock),
+          hint: "Low inventory",
+          icon: AlertTriangle,
+          tone: "warning",
+          onClick: () => navigate("/products"),
+        })}
+        {bentoTile({
+          label: "Net Profit",
+          value: money(derived.netProfit),
+          hint: "Est. after expense",
+          icon: Wallet,
+          tone: "success",
+          trend: { up: derived.netProfit >= 0, value: derived.netProfit >= 0 ? "Profit" : "Loss" },
+        })}
+        {bentoTile({
+          label: "Total Expense",
+          value: money(derived.estExpense),
+          hint: "Est. cost of goods",
+          icon: PackageSearch,
+          tone: "muted",
+        })}
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -181,15 +316,15 @@ export default function Dashboard() {
             <AreaChart data={revenueCard.chartData}>
               <defs>
                 <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="hsl(221,83%,53%)" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="hsl(221,83%,53%)" stopOpacity={0} />
+                  <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={{ borderRadius: "0.75rem", border: "1px solid hsl(var(--border))", boxShadow: "0 4px 16px rgb(0 0 0 / 0.08)" }} />
-              <Area type="monotone" dataKey="revenue" stroke="hsl(221,83%,53%)" strokeWidth={2.5} fillOpacity={1} fill="url(#revGrad)" dot={{ r: 3.5, fill: "hsl(221,83%,53%)", strokeWidth: 0 }} />
+              <Area type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2.5} fillOpacity={1} fill="url(#revGrad)" dot={{ r: 3.5, fill: "hsl(var(--primary))", strokeWidth: 0 }} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -233,7 +368,7 @@ export default function Dashboard() {
           </div>
           {recentOrders.length === 0 ? (
             <div className="py-10 text-center text-muted-foreground">
-              <ShoppingCart className="mx-auto mb-2 h-8 w-8 opacity-30" />
+              <ShoppingBag className="mx-auto mb-2 h-8 w-8 opacity-30" />
               <p className="text-sm">No orders yet</p>
             </div>
           ) : (
@@ -241,7 +376,7 @@ export default function Dashboard() {
               {recentOrders.slice(0, 5).map((order, index) => (
                 <div key={order.id || index} className="flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors hover:bg-muted/40">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-[11px] font-bold text-blue-600">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-[11px] font-bold text-primary">
                       {index + 1}
                     </div>
                     <div>
@@ -273,7 +408,7 @@ export default function Dashboard() {
           </div>
           {topProducts.length === 0 ? (
             <div className="py-10 text-center text-muted-foreground">
-              <Package className="mx-auto mb-2 h-8 w-8 opacity-30" />
+              <Boxes className="mx-auto mb-2 h-8 w-8 opacity-30" />
               <p className="text-sm">No products yet</p>
             </div>
           ) : (
@@ -281,7 +416,7 @@ export default function Dashboard() {
               {topProducts.slice(0, 5).map((product, index) => (
                 <div key={product.name || index} className="flex items-center justify-between rounded-xl px-3 py-2.5 transition-colors hover:bg-muted/40">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-[11px] font-bold text-amber-600">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-warning/10 text-[11px] font-bold text-warning">
                       #{index + 1}
                     </div>
                     <div>
@@ -289,7 +424,7 @@ export default function Dashboard() {
                       <p className="text-[11px] text-muted-foreground">{product.sold} sold</p>
                     </div>
                   </div>
-                  <p className="text-[13px] font-bold text-emerald-600">{product.revenue}</p>
+                  <p className="text-[13px] font-bold text-success">{product.revenue}</p>
                 </div>
               ))}
             </div>
