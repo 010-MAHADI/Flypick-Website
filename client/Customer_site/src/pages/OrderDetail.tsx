@@ -27,11 +27,23 @@ const statusColorMap: Record<string, string> = {
   cancelled: "text-destructive",
 };
 
+const CANCEL_REASONS = [
+  "Ordered by mistake",
+  "Found a better price elsewhere",
+  "Item no longer needed",
+  "Delivery taking too long",
+  "Other",
+];
+
 const OrderDetail = () => {
   const { orderId } = useParams();
   const { orders, cancelOrder } = useOrders();
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState(CANCEL_REASONS[0]);
+  const [cancelReasonOther, setCancelReasonOther] = useState("");
+  const [refundMethod, setRefundMethod] = useState<"store_credit" | "original">("original");
   const order = orders.find((o) => o.order_id === orderId);
 
   if (!order) {
@@ -70,16 +82,24 @@ const OrderDetail = () => {
     }
   };
 
-  const handleCancelOrder = async () => {
-    if (!confirm('Are you sure you want to cancel this order? This action cannot be undone.')) {
-      return;
-    }
+  const isPaid = order.payment_status === 'paid';
 
+  const handleCancelOrder = async () => {
+    const reason = cancelReason === "Other"
+      ? (cancelReasonOther.trim() || "Other")
+      : cancelReason;
     setCancelling(true);
     try {
-      const success = await cancelOrder(order.order_id);
+      const success = await cancelOrder(order.order_id, reason, isPaid ? refundMethod : 'original');
       if (success) {
-        toast.success('Order cancelled successfully');
+        toast.success(
+          isPaid
+            ? (refundMethod === 'store_credit'
+                ? 'Order cancelled — refund added to your wallet.'
+                : 'Order cancelled — your refund request has been sent for processing.')
+            : 'Order cancelled successfully'
+        );
+        setCancelOpen(false);
       } else {
         toast.error('Failed to cancel order. Please try again.');
       }
@@ -145,24 +165,15 @@ const OrderDetail = () => {
                 </button>
               )}
 
-              {/* Cancel Order Button - Only show for pending unpaid orders */}
-              {order.status === "pending" && order.payment_status !== 'paid' && (
+              {/* Cancel Order — allowed only while the order is still pending */}
+              {order.status === "pending" && (
                 <button
-                  onClick={handleCancelOrder}
+                  onClick={() => setCancelOpen(true)}
                   disabled={cancelling}
                   className="text-center text-sm font-bold py-2.5 px-6 rounded-lg border-2 border-destructive text-destructive hover:bg-destructive/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
-                  {cancelling ? (
-                    <>
-                      <div className="w-4 h-4 border border-destructive border-t-transparent rounded-full animate-spin"></div>
-                      Cancelling...
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="w-4 h-4" />
-                      Cancel Order
-                    </>
-                  )}
+                  <XCircle className="w-4 h-4" />
+                  Cancel Order
                 </button>
               )}
 
@@ -272,6 +283,12 @@ const OrderDetail = () => {
                     {shipping === 0 ? "Free" : <><TakaSign />{shipping.toLocaleString()}</>}
                   </span>
                 </div>
+                {order.shipping_method && (
+                  <div className="rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground">
+                    <p className="font-semibold text-foreground">{order.shipping_method}</p>
+                    {order.shipping_estimated_delivery && <p>Estimated delivery: {order.shipping_estimated_delivery}</p>}
+                  </div>
+                )}
                 {discount > 0 && (
                   <div className="flex justify-between text-[hsl(142,71%,45%)]">
                     <span className="flex items-center gap-1"><Tag className="w-3 h-3" />{order.coupon_code || "Discount"}</span>
@@ -282,6 +299,7 @@ const OrderDetail = () => {
                   <span>Total</span>
                   <span className="text-primary"><TakaSign />{total.toLocaleString()}</span>
                 </div>
+                <p className="text-[11px] text-muted-foreground text-right">Tax excluded</p>
               </div>
             </div>
 
@@ -310,9 +328,12 @@ const OrderDetail = () => {
 
             <div className="bg-muted/50 border border-border rounded-xl p-4 text-center">
               <p className="text-xs text-muted-foreground">Estimated Delivery</p>
-              {(() => {
+              {order.shipping_estimated_delivery ? (
+                <p className="text-sm font-bold mt-1">{order.shipping_estimated_delivery}</p>
+              ) : (() => {
                 // Collect estimated delivery ranges from each item's shipping option
                 const deliveries = order.items.map((item) => {
+                  if (item.shipping_estimated_delivery) return item.shipping_estimated_delivery;
                   const st = item.shipping_type;
                   const opts: any[] = item.product_details?.variants?.shippingOptions || [];
                   const match = st
@@ -340,6 +361,81 @@ const OrderDetail = () => {
           </div>
         </div>
       </main>
+
+      {/* Cancel dialog: reason + (for paid orders) refund method */}
+      {cancelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+             onClick={() => !cancelling && setCancelOpen(false)}>
+          <div className="bg-card rounded-xl border border-border w-full max-w-md p-5 sm:p-6"
+               onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-1">Cancel Order</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Order {order.order_id}. Cancellation is only possible while the order is pending.
+            </p>
+
+            <label className="block text-sm font-medium mb-1.5">Reason for cancellation</label>
+            <select
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background mb-3"
+            >
+              {CANCEL_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            {cancelReason === "Other" && (
+              <input
+                value={cancelReasonOther}
+                onChange={(e) => setCancelReasonOther(e.target.value)}
+                placeholder="Tell us more"
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background mb-3"
+              />
+            )}
+
+            {isPaid && (
+              <>
+                <label className="block text-sm font-medium mb-1.5">Refund method</label>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setRefundMethod("store_credit")}
+                    className={`p-3 rounded-lg border-2 text-left transition-all ${refundMethod === "store_credit" ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground"}`}
+                  >
+                    <span className="text-sm font-semibold block">Store Credit</span>
+                    <span className="text-[11px] text-muted-foreground">Instant — added to your wallet</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRefundMethod("original")}
+                    className={`p-3 rounded-lg border-2 text-left transition-all ${refundMethod === "original" ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground"}`}
+                  >
+                    <span className="text-sm font-semibold block">Original Method</span>
+                    <span className="text-[11px] text-muted-foreground">Refunded by admin to your payment source</span>
+                  </button>
+                </div>
+              </>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setCancelOpen(false)}
+                disabled={cancelling}
+                className="text-sm font-medium py-2 px-4 rounded-lg border border-border hover:bg-muted disabled:opacity-50"
+              >
+                Keep Order
+              </button>
+              <button
+                onClick={handleCancelOrder}
+                disabled={cancelling}
+                className="text-sm font-bold py-2 px-4 rounded-lg bg-destructive text-white hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {cancelling ? (
+                  <><div className="w-4 h-4 border border-white border-t-transparent rounded-full animate-spin"></div> Cancelling...</>
+                ) : "Confirm Cancellation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <SiteFooter />
     </div>
   );

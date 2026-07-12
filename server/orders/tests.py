@@ -396,18 +396,54 @@ class OrderLifecycleTests(APITestCase):
         order.save(update_fields=['payment_status'])
         self.client.force_authenticate(self.customer)
         r = self.client.patch(f'/api/orders/orders/{order.id}/cancel/',
-                              {'reason': 'Too slow'}, format='json')
+                              {'reason': 'Too slow', 'refund_method': 'original'}, format='json')
         self.assertEqual(r.status_code, 200)
         refund = order.refunds.get()
-        self.assertEqual(refund.status, 'requested')
+        # Original-method cancellation refund is opened 'approved', awaiting the
+        # settler (COD -> seller, online -> admin). This COD order -> seller.
+        self.assertEqual(refund.status, 'approved')
+        self.assertEqual(refund.origin, 'cancellation')
+        self.assertEqual(refund.settlement_owner, 'seller')
         self.assertEqual(refund.amount, order.total_amount)
 
+    def test_cancel_only_while_pending(self):
+        """A processing order can no longer be cancelled by the customer."""
+        order = self._place_order()
+        self.client.force_authenticate(self.seller)
+        self.client.post(f'/api/orders/orders/{order.id}/update_status/',
+                         {'status': 'processing'}, format='json')
+        self.client.force_authenticate(self.customer)
+        r = self.client.patch(f'/api/orders/orders/{order.id}/cancel/',
+                              {'reason': 'changed mind'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_cancel_store_credit_instant_refund(self):
+        from finance import services as finance_services
+        order = self._place_order()  # COD, subtotal 160
+        order.payment_status = 'paid'
+        order.save(update_fields=['payment_status'])
+        # Seller must have balance to fund a COD store-credit refund.
+        finance_services.seller_deposit(self.seller, order.total_amount, actor=self.admin)
+        self.client.force_authenticate(self.customer)
+        r = self.client.patch(f'/api/orders/orders/{order.id}/cancel/',
+                              {'reason': 'Too slow', 'refund_method': 'store_credit'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        refund = order.refunds.get()
+        self.assertEqual(refund.status, 'completed')  # instant
+        from .lifecycle import wallet_balance
+        self.assertEqual(wallet_balance(self.customer), order.total_amount)
+
     def test_refund_workflow_to_store_credit_credits_wallet(self):
+        from finance import services as finance_services
         from .lifecycle import create_refund, transition_refund, wallet_balance
         order = self._place_order()
         order.payment_status = 'paid'
         order.status = 'delivered'
         order.save(update_fields=['payment_status', 'status'])
+
+        # COD order: the seller keeps the cash, so their Marketplace Balance
+        # funds the refund — they must have deposited enough (limit is -100).
+        finance_services.seller_deposit(self.seller, order.total_amount, actor=self.admin)
 
         refund = create_refund(order, order.total_amount, method='store_credit',
                                reason='Damaged item', requested_by=self.customer)
@@ -421,26 +457,61 @@ class OrderLifecycleTests(APITestCase):
         order.refresh_from_db()
         self.assertEqual(order.payment_status, 'refunded')
         self.assertEqual(order.status, 'refunded')
+        self.assertEqual(
+            finance_services.seller_balances(self.seller)['marketplace_balance'],
+            Decimal('0.00'))
 
     def test_illegal_refund_transition_rejected(self):
         from rest_framework.exceptions import ValidationError as DRFValidationError
         from .lifecycle import create_refund, transition_refund
         order = self._place_order()
-        refund = create_refund(order, Decimal('10'), requested_by=self.customer)
+        order.payment_status = 'paid'
+        order.save(update_fields=['payment_status'])
+        refund = create_refund(order, order.total_amount, requested_by=self.customer)
         with self.assertRaises(DRFValidationError):
             transition_refund(refund, 'completed', actor=self.admin)  # must be approved first
 
+    def test_partial_refund_amount_rejected(self):
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from .lifecycle import create_refund
+        order = self._place_order()
+        order.payment_status = 'paid'
+        order.save(update_fields=['payment_status'])
+        with self.assertRaises(DRFValidationError):
+            create_refund(order, Decimal('10'), requested_by=self.customer)
+
     def test_store_credit_redeemed_at_checkout(self):
+        from finance import services as finance_services
         from .lifecycle import credit_wallet, wallet_balance
+        finance_services.admin_deposit(Decimal('50'), actor=self.admin)
         credit_wallet(self.customer, Decimal('50'), note='Test credit')
-        order = self._place_order(use_store_credit=True)
-        # 2 x 80 = 160 subtotal, 50 credit applied
+        # Store credit is online-payment only, so pay via bkash (not COD).
+        order = self._place_order(use_store_credit=True, payment_method='bkash')
+        # The order total is goods - store credit; no charge is stored on it.
+        goods = order.subtotal + order.shipping_cost - order.discount
         self.assertEqual(order.store_credit_used, Decimal('50.00'))
-        self.assertEqual(order.total_amount, Decimal('110.00'))
+        self.assertEqual(order.platform_charge, Decimal('0.00'))
+        self.assertEqual(order.total_amount, goods - Decimal('50.00'))
         self.assertEqual(wallet_balance(self.customer), Decimal('0.00'))
 
-    def test_wallet_endpoint_returns_balance_and_history(self):
+    def test_store_credit_blocked_for_cod(self):
+        from finance import services as finance_services
         from .lifecycle import credit_wallet
+        finance_services.admin_deposit(Decimal('50'), actor=self.admin)
+        credit_wallet(self.customer, Decimal('50'), note='Test credit')
+        self.client.force_authenticate(self.customer)
+        r = self.client.post('/api/orders/orders/', {
+            'shipping_full_name': 'B', 'shipping_phone': '1', 'shipping_street': 'S',
+            'shipping_city': 'Dhaka', 'payment_method': 'cod',
+            'use_store_credit': True,
+            'items': [{'product_id': self.product.id, 'quantity': 1}],
+        }, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    def test_wallet_endpoint_returns_balance_and_history(self):
+        from finance import services as finance_services
+        from .lifecycle import credit_wallet
+        finance_services.admin_deposit(Decimal('25'), actor=self.admin)
         credit_wallet(self.customer, Decimal('25'), note='Promo credit')
         self.client.force_authenticate(self.customer)
         r = self.client.get('/api/orders/wallet/')
@@ -469,9 +540,19 @@ class OrderLifecycleTests(APITestCase):
         self.assertEqual(order.status, 'confirmed')
         self.assertEqual(order.status_history.count(), 2)
 
-    def test_mark_paid_persists_and_logs(self):
+    def test_mark_paid_is_admin_only(self):
+        """Sellers can no longer mark orders paid — admin only."""
         order = self._place_order()
+        # Seller is now forbidden from recording payment.
         self.client.force_authenticate(self.seller)
+        r = self.client.post(f'/api/orders/orders/{order.id}/mark_paid/',
+                             {'payment_method': 'bkash'}, format='json')
+        self.assertEqual(r.status_code, 403)
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, 'pending')
+
+        # Admin can record the payment.
+        self.client.force_authenticate(self.admin)
         r = self.client.post(f'/api/orders/orders/{order.id}/mark_paid/',
                              {'payment_method': 'bkash', 'note': 'TrxID ABC123'}, format='json')
         self.assertEqual(r.status_code, 200, r.content)
@@ -479,7 +560,7 @@ class OrderLifecycleTests(APITestCase):
         self.assertEqual(order.payment_status, 'paid')
         self.assertEqual(order.payment_method, 'bkash')
         note_entry = order.status_history.last()
-        self.assertIn('Payment received via bkash', note_entry.note)
+        self.assertIn('Payment recorded by admin via bkash', note_entry.note)
         # double-marking is rejected
         r = self.client.post(f'/api/orders/orders/{order.id}/mark_paid/', {}, format='json')
         self.assertEqual(r.status_code, 400)
@@ -488,6 +569,16 @@ class OrderLifecycleTests(APITestCase):
         order2 = self._place_order()
         r = self.client.post(f'/api/orders/orders/{order2.id}/mark_paid/', {}, format='json')
         self.assertEqual(r.status_code, 403)
+
+    def test_seller_cannot_patch_payment_fields(self):
+        """A seller PATCHing payment fields is rejected."""
+        order = self._place_order()
+        self.client.force_authenticate(self.seller)
+        r = self.client.patch(f'/api/orders/orders/{order.id}/',
+                              {'payment_status': 'paid'}, format='json')
+        self.assertEqual(r.status_code, 403)
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, 'pending')
 
     def test_note_only_update_records_history_without_transition(self):
         order = self._place_order()
@@ -502,11 +593,13 @@ class OrderLifecycleTests(APITestCase):
         self.assertEqual(order.status_history.last().note, 'Waiting for stock confirmation')
 
     def test_seller_processes_full_refund_directly(self):
+        from finance import services as finance_services
         from .lifecycle import wallet_balance
         order = self._place_order()
         order.payment_status = 'paid'
         order.status = 'delivered'
         order.save(update_fields=['payment_status', 'status'])
+        finance_services.seller_deposit(self.seller, order.total_amount, actor=self.admin)
 
         self.client.force_authenticate(self.seller)
         r = self.client.post('/api/orders/refunds/', {
@@ -517,9 +610,10 @@ class OrderLifecycleTests(APITestCase):
         self.assertEqual(r.data['status'], 'completed')
         order.refresh_from_db()
         self.assertEqual(order.payment_status, 'refunded')
-        self.assertEqual(wallet_balance(self.customer), order.subtotal)
+        self.assertEqual(wallet_balance(self.customer), order.total_amount)
 
-    def test_seller_partial_refund_validates_amount(self):
+    def test_seller_partial_refund_rejected(self):
+        """Spec: one refund per order, no partial refunds."""
         order = self._place_order()
         order.payment_status = 'paid'
         order.save(update_fields=['payment_status'])
@@ -529,15 +623,14 @@ class OrderLifecycleTests(APITestCase):
             'order_id': order.order_id, 'reason': 'x', 'amount': '99999',
         }, format='json')
         self.assertEqual(r.status_code, 400)
-        # valid partial refund
+        # partial refund rejected
         r = self.client.post('/api/orders/refunds/', {
             'order_id': order.order_id, 'reason': 'One item missing',
             'amount': '50', 'method': 'store_credit',
         }, format='json')
-        self.assertEqual(r.status_code, 201, r.content)
-        self.assertEqual(r.data['refund_type'], 'partial')
+        self.assertEqual(r.status_code, 400)
         order.refresh_from_db()
-        self.assertEqual(order.payment_status, 'paid')  # partial keeps paid
+        self.assertEqual(order.payment_status, 'paid')
 
     def test_return_request_stores_customer_refund_method(self):
         from .models import ReturnRequest
@@ -555,34 +648,71 @@ class OrderLifecycleTests(APITestCase):
         rr = ReturnRequest.objects.get(order=order)
         self.assertEqual(rr.refund_method, 'store_credit')
 
-        # Approving uses the customer's chosen method
+        # Approving uses the customer's chosen method; the refund is always
+        # for the full paid amount (no partial refunds).
+        from finance import services as finance_services
         order.payment_status = 'paid'
         order.save(update_fields=['payment_status'])
+        finance_services.seller_deposit(self.seller, order.total_amount, actor=self.admin)
         self.client.force_authenticate(self.seller)
         r = self.client.patch(f'/api/orders/returns/{rr.id}/update_status/',
-                              {'status': 'approved', 'refund_amount': '80'}, format='json')
+                              {'status': 'approved'}, format='json')
         self.assertEqual(r.status_code, 200, r.content)
         refund = rr.refunds.get()
         self.assertEqual(refund.method, 'store_credit')
+        self.assertEqual(refund.amount, order.total_amount)
 
-    def test_return_marked_refunded_completes_refund_case(self):
+    def test_return_approved_store_credit_completes_instantly(self):
+        """Approving a store-credit return refunds the wallet immediately."""
+        from finance import services as finance_services
         from .models import ReturnRequest
         order = self._place_order()
         order.payment_status = 'paid'
         order.status = 'delivered'
         order.save(update_fields=['payment_status', 'status'])
+        finance_services.seller_deposit(self.seller, order.total_amount, actor=self.admin)
         return_request = ReturnRequest.objects.create(
             order=order, return_id='RETTEST0001', reason='Damaged',
-            refund_amount=order.total_amount, status='pending')
+            refund_method='store_credit', status='pending')
 
         self.client.force_authenticate(self.seller)
         r = self.client.patch(f'/api/orders/returns/{return_request.id}/update_status/', {
-            'status': 'refunded', 'refund_method': 'store_credit',
+            'status': 'approved',
         }, format='json')
         self.assertEqual(r.status_code, 200, r.content)
 
         refund = return_request.refunds.get()
         self.assertEqual(refund.status, 'completed')
         self.assertEqual(refund.method, 'store_credit')
+        return_request.refresh_from_db()
+        self.assertEqual(return_request.status, 'refunded')
         from .lifecycle import wallet_balance
         self.assertEqual(wallet_balance(self.customer), order.total_amount)
+
+    def test_return_cod_original_seller_settles(self):
+        """COD return, original method: seller settles with a transaction id."""
+        from .models import ReturnRequest, Refund
+        order = self._place_order()  # COD
+        order.payment_status = 'paid'
+        order.status = 'delivered'
+        order.save(update_fields=['payment_status', 'status'])
+        return_request = ReturnRequest.objects.create(
+            order=order, return_id='RETTEST0002', reason='Damaged',
+            refund_method='original', status='pending')
+
+        self.client.force_authenticate(self.seller)
+        r = self.client.patch(f'/api/orders/returns/{return_request.id}/update_status/',
+                              {'status': 'approved'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        refund = return_request.refunds.get()
+        self.assertEqual(refund.status, 'approved')       # awaits seller settlement
+        self.assertEqual(refund.settlement_owner, 'seller')
+
+        # Seller settles with a transaction id -> completed.
+        r = self.client.post(f'/api/orders/refunds/{refund.id}/settle/',
+                             {'transaction_id': 'BKASH-TXN-1', 'note': 'refunded via bkash'},
+                             format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        refund.refresh_from_db()
+        self.assertEqual(refund.status, 'completed')
+        self.assertEqual(refund.settlement_transaction_id, 'BKASH-TXN-1')

@@ -59,6 +59,19 @@ const ProductDetail = () => {
     }
   }, [navigate, product]);
 
+  useEffect(() => {
+    if (!product) return;
+    const options =
+      product.variants?.shippingOptions && product.variants.shippingOptions.length > 0
+        ? product.variants.shippingOptions.filter((opt: any) => opt.enabled)
+        : [{ type: "Standard Delivery", price: product.freeShipping ? "0" : "60", estimatedDelivery: "4-6 days", enabled: true, freeShipping: product.freeShipping }];
+    if (!options.length) return;
+    const currentIsAvailable = options.some((option: any) => option.type.toLowerCase() === selectedShipping);
+    if (!selectedShipping || !currentIsAvailable) {
+      setSelectedShipping(options[0].type.toLowerCase());
+    }
+  }, [product, selectedShipping]);
+
   const reviewsRef = useRef<HTMLDivElement>(null);
   const specsRef = useRef<HTMLDivElement>(null);
   const descRef = useRef<HTMLDivElement>(null);
@@ -105,11 +118,7 @@ const ProductDetail = () => {
   const shippingOptions =
     product.variants?.shippingOptions && product.variants.shippingOptions.length > 0
       ? product.variants.shippingOptions.filter((opt: any) => opt.enabled)
-      : [{ type: "Standard", price: product.freeShipping ? "0" : "50", estimatedDelivery: "3-5", enabled: true, freeShipping: product.freeShipping }];
-
-  if (!selectedShipping && shippingOptions.length > 0) {
-    setSelectedShipping(shippingOptions[0].type.toLowerCase());
-  }
+      : [{ type: "Standard Delivery", price: product.freeShipping ? "0" : "60", estimatedDelivery: "4-6 days", enabled: true, freeShipping: product.freeShipping }];
 
   const hasColors = !!(product.variants?.hasColors && product.variants?.selectedColors && product.variants.selectedColors.length > 0);
   const hasSizes = !!(product.variants?.hasSizes && product.variants?.sizeStocks && product.variants.sizeStocks.length > 0);
@@ -296,7 +305,7 @@ const ProductDetail = () => {
                   </>
                 )}
               </span>
-              <span className="block text-[11px] text-muted-foreground">{option.estimatedDelivery} business days</span>
+              <span className="block text-[11px] text-muted-foreground">{option.estimatedDelivery}</span>
             </span>
             <span className={`w-[18px] h-[18px] rounded-full border-2 flex items-center justify-center flex-shrink-0 ${active ? "border-primary" : "border-border"}`}>
               {active && <span className="w-2 h-2 rounded-full bg-primary" />}

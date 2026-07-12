@@ -34,14 +34,27 @@ class RefundEventSerializer(serializers.ModelSerializer):
 class RefundSerializer(serializers.ModelSerializer):
     order_id = serializers.CharField(source='order.order_id', read_only=True)
     customer_name = serializers.CharField(source='order.shipping_full_name', read_only=True)
+    payment_method = serializers.CharField(source='order.payment_method', read_only=True)
+    settlement_owner = serializers.CharField(read_only=True)
+    settlement_proof_url = serializers.SerializerMethodField()
+    settled_by_email = serializers.CharField(source='settled_by.email', read_only=True, default=None)
     events = RefundEventSerializer(many=True, read_only=True)
 
     class Meta:
         model = Refund
         fields = ['id', 'refund_id', 'order', 'order_id', 'customer_name', 'return_request',
-                  'amount', 'refund_type', 'method', 'status', 'reason',
+                  'amount', 'refund_type', 'method', 'status', 'reason', 'origin',
+                  'payment_method', 'settlement_owner', 'settlement_transaction_id',
+                  'settlement_proof_url', 'settlement_note', 'settled_by_email', 'settled_at',
                   'events', 'created_at', 'updated_at']
         read_only_fields = fields
+
+    def get_settlement_proof_url(self, obj):
+        if not obj.settlement_proof:
+            return None
+        request = self.context.get('request')
+        url = obj.settlement_proof.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class WalletTransactionSerializer(serializers.ModelSerializer):
@@ -67,7 +80,12 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrderItem
-        fields = ['id', 'product', 'product_title', 'product_image', 'product_image_url', 'color', 'size', 'shipping_type', 'quantity', 'price', 'total_price', 'product_details']
+        fields = [
+            'id', 'product', 'product_title', 'product_image', 'product_image_url',
+            'color', 'size', 'shipping_type', 'shipping_charge',
+            'shipping_estimated_delivery', 'quantity', 'price', 'total_price',
+            'product_details'
+        ]
         read_only_fields = ['id', 'total_price']
     
     def get_product_details(self, obj):
@@ -123,7 +141,8 @@ class OrderSerializer(serializers.ModelSerializer):
             'shipping_full_name', 'shipping_phone', 'shipping_street', 'shipping_city',
             'shipping_state', 'shipping_zip_code', 'shipping_country',
             'payment_method', 'payment_status',
-            'subtotal', 'shipping_cost', 'discount', 'coupon_code',
+            'subtotal', 'shipping_cost', 'shipping_method',
+            'shipping_estimated_delivery', 'discount', 'coupon_code',
             'store_credit_used', 'total_amount',
             'status', 'order_notes', 'delivery_instructions',
             'tracking_number', 'courier_name', 'estimated_delivery_date',
@@ -269,153 +288,326 @@ class OrderCreateSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("Order must contain at least one item.")
         return value
+
+    def _enabled_shipping_options(self, product):
+        from products.serializers import normalize_product_shipping_options
+        return [option for option in normalize_product_shipping_options(product) if option.get('enabled')]
+
+    def _select_shipping_option(self, product, requested_type):
+        from decimal import Decimal, InvalidOperation
+
+        enabled_options = self._enabled_shipping_options(product)
+        if not enabled_options:
+            raise serializers.ValidationError(
+                f'No shipping method is available for "{product.title[:60]}".')
+
+        requested = str(requested_type or '').strip().lower()
+        selected = None
+        if requested:
+            selected = next(
+                (
+                    option for option in enabled_options
+                    if str(option.get('type', '')).strip().lower() == requested
+                    or str(option.get('methodId', '')).strip().lower() == requested
+                ),
+                None,
+            )
+            if not selected:
+                raise serializers.ValidationError(
+                    f'Selected shipping method is not available for "{product.title[:60]}".')
+        else:
+            selected = enabled_options[0]
+
+        try:
+            charge = Decimal(str(selected.get('price', 0) or 0)).quantize(Decimal('0.01'))
+        except (InvalidOperation, TypeError, ValueError):
+            charge = Decimal('0.00')
+
+        return {
+            'name': str(selected.get('type') or 'Shipping'),
+            'charge': max(Decimal('0.00'), charge),
+            'estimated_delivery': str(selected.get('estimatedDelivery') or ''),
+        }
     
+    def _apply_seller_coupon(self, coupon, customer, order_items, item_shipping_by_index):
+        """Apply a seller coupon per spec: it may reduce only the owning
+        seller's product prices (Product Only) or that seller's shipping
+        (Shipping Only). Entire-order coupons are not supported.
+
+        Returns (product_discount, shipping_discount) — exactly one is > 0.
+        Raises ValidationError when the coupon cannot be applied.
+        """
+        from decimal import Decimal
+        from finance.models import SELLER_NEGATIVE_LIMIT
+        from finance.services import seller_balances
+
+        # A seller whose Marketplace Balance fell below the allowed negative
+        # limit must deposit before their coupons can be used (spec Part 2 §4).
+        balance = seller_balances(coupon.seller)['marketplace_balance']
+        if balance < SELLER_NEGATIVE_LIMIT:
+            raise serializers.ValidationError(
+                {'coupon_code': 'This coupon is temporarily unavailable.'})
+
+        if coupon.uses >= coupon.max_uses:
+            raise serializers.ValidationError({'coupon_code': 'This coupon has been fully used.'})
+
+        # Items belonging to the coupon owner's shops.
+        seller_items = [
+            (idx, item) for idx, item in enumerate(order_items)
+            if item['product'].shop.seller_id == coupon.seller_id
+        ]
+        if not seller_items:
+            raise serializers.ValidationError(
+                {'coupon_code': 'This coupon does not apply to any product in your order.'})
+
+        # Narrow eligibility by coupon type.
+        eligible = seller_items
+        if coupon.coupon_type == 'first_order':
+            if Order.objects.filter(customer=customer).exists():
+                raise serializers.ValidationError(
+                    {'coupon_code': 'This coupon is only valid on your first order.'})
+        elif coupon.coupon_type == 'category' and coupon.category:
+            eligible = [
+                (idx, item) for idx, item in seller_items
+                if item['product'].category_fk_id == coupon.category_id
+                or (item['product'].category and coupon.category.name
+                    and item['product'].category.lower() == coupon.category.name.lower())
+            ]
+        elif coupon.coupon_type == 'specific_products':
+            allowed_ids = set(coupon.coupon_products.values_list('product_id', flat=True))
+            eligible = [(idx, item) for idx, item in seller_items
+                        if item['product'].id in allowed_ids]
+        if not eligible:
+            raise serializers.ValidationError(
+                {'coupon_code': 'This coupon does not apply to any product in your order.'})
+
+        eligible_subtotal = sum(item['price'] * item['quantity'] for _, item in eligible)
+
+        if coupon.discount_type == 'shipping':
+            # Shipping Only: free shipping for the seller's items. Handled by
+            # charging less shipping — never enters marketplace accounting.
+            shipping_discount = sum(item_shipping_by_index.get(idx, Decimal('0'))
+                                    for idx, _ in seller_items)
+            if shipping_discount <= 0:
+                raise serializers.ValidationError(
+                    {'coupon_code': 'These items already ship free.'})
+            return Decimal('0'), shipping_discount.quantize(Decimal('0.01'))
+
+        if coupon.min_order_amount and eligible_subtotal < coupon.min_order_amount:
+            raise serializers.ValidationError(
+                {'coupon_code': f'This coupon needs a minimum of ৳{coupon.min_order_amount} '
+                                'in eligible products.'})
+
+        if coupon.discount_type == 'percent':
+            product_discount = (eligible_subtotal * coupon.discount_value / Decimal('100'))
+        else:  # fixed
+            product_discount = min(coupon.discount_value, eligible_subtotal)
+        return product_discount.quantize(Decimal('0.01')), Decimal('0')
+
+    def _apply_admin_coupon(self, coupon, customer, order_items, subtotal):
+        """Admin coupon: product price only, never shipping, funded by the
+        Platform Balance reserve. Returns {seller_id: discount} distributed
+        proportionally across participating sellers (spec Part 2 §5)."""
+        from decimal import Decimal
+        from django.db.models import Sum
+        from finance.models import LedgerAccount
+
+        now = timezone.now()
+        if coupon.status != 'active':
+            raise serializers.ValidationError({'coupon_code': 'This coupon is not active.'})
+        if coupon.starts_at and coupon.starts_at > now:
+            raise serializers.ValidationError({'coupon_code': 'This coupon is not active yet.'})
+        if coupon.expires_at and coupon.expires_at <= now:
+            raise serializers.ValidationError({'coupon_code': 'This coupon has expired.'})
+        if coupon.max_uses and coupon.uses >= coupon.max_uses:
+            raise serializers.ValidationError({'coupon_code': 'This coupon has been fully used.'})
+        if subtotal < (coupon.min_order_amount or 0):
+            raise serializers.ValidationError(
+                {'coupon_code': f'This coupon needs a minimum order of ৳{coupon.min_order_amount}.'})
+
+        # Scope eligibility per item.
+        if coupon.scope == 'marketplace':
+            eligible = order_items
+        elif coupon.scope == 'seller':
+            seller_ids = set(coupon.sellers.values_list('id', flat=True))
+            eligible = [i for i in order_items if i['product'].shop.seller_id in seller_ids]
+        elif coupon.scope == 'category':
+            cat_ids = set(coupon.categories.values_list('id', flat=True))
+            eligible = [i for i in order_items if i['product'].category_fk_id in cat_ids]
+        else:  # product
+            product_ids = set(coupon.products.values_list('id', flat=True))
+            eligible = [i for i in order_items if i['product'].id in product_ids]
+        if not eligible:
+            raise serializers.ValidationError(
+                {'coupon_code': 'This coupon does not apply to any product in your order.'})
+
+        eligible_total = sum(i['price'] * i['quantity'] for i in eligible)
+        if coupon.discount_type == 'percent':
+            discount = eligible_total * coupon.discount_value / Decimal('100')
+        else:
+            discount = min(coupon.discount_value, eligible_total)
+        if coupon.max_discount_amount:
+            discount = min(discount, coupon.max_discount_amount)
+        discount = discount.quantize(Decimal('0.01'))
+
+        # The redemption may not exceed what is still available in the reserve
+        # (reserve balance minus discounts promised to unpaid orders).
+        reserve = LedgerAccount.objects.filter(
+            account_type=LedgerAccount.COUPON_RESERVE, coupon=coupon).first()
+        reserve_balance = reserve.balance if reserve else Decimal('0')
+        pending = coupon.redemptions.filter(status='pending').aggregate(
+            total=Sum('amount'))['total'] or Decimal('0')
+        available = reserve_balance - pending
+        if discount > available:
+            if available <= 0:
+                raise serializers.ValidationError(
+                    {'coupon_code': 'This coupon budget has been exhausted.'})
+            discount = available.quantize(Decimal('0.01'))
+
+        # Distribute proportionally across participating sellers.
+        per_seller_eligible = {}
+        for item in eligible:
+            sid = item['product'].shop.seller_id
+            per_seller_eligible[sid] = per_seller_eligible.get(sid, Decimal('0')) \
+                + item['price'] * item['quantity']
+        split = {}
+        remaining = discount
+        seller_ids = list(per_seller_eligible.keys())
+        for pos, sid in enumerate(seller_ids):
+            if pos == len(seller_ids) - 1:
+                share = remaining
+            else:
+                share = (discount * per_seller_eligible[sid] / eligible_total)\
+                    .quantize(Decimal('0.01'))
+                remaining -= share
+            if share > 0:
+                split[sid] = share
+        return split
+
     def create(self, validated_data):
         from products.models import Product
         from seller.models import Coupon
+        from finance.models import AdminCoupon, AdminCouponRedemption
+        from finance import services as finance_services
         from decimal import Decimal
+        from django.db import transaction
         import uuid
         import logging
-        
+
         logger = logging.getLogger(__name__)
-        
-        try:
-            items_data = validated_data.pop('items')
-            customer = self.context['request'].user
-            
-            # Generate unique order ID
+
+        items_data = validated_data.pop('items')
+        customer = self.context['request'].user
+        payment_method = validated_data['payment_method']
+        is_cod = payment_method.lower() in ('cod', 'cash_on_delivery')
+
+        # Spec: customer wallet credit is online-payment only — never COD.
+        if validated_data.get('use_store_credit') and is_cod:
+            raise serializers.ValidationError(
+                {'use_store_credit': 'Store credit cannot be used with Cash on Delivery.'})
+
+        with transaction.atomic():
             order_id = f"FP{uuid.uuid4().hex[:10].upper()}"
-            
-            # Calculate totals (use Decimal for all monetary values)
+
             subtotal = Decimal('0')
             shipping_cost = Decimal('0')
             order_items = []
-            
+            item_shipping_by_index = {}
+            selected_shipping_methods = []
+
             for item_data in items_data:
                 try:
-                    product = Product.objects.get(id=item_data['product_id'])
+                    product = Product.objects.select_related('shop__seller').get(
+                        id=item_data['product_id'])
                 except Product.DoesNotExist:
-                    raise serializers.ValidationError(f"Product with ID {item_data['product_id']} not found.")
+                    raise serializers.ValidationError(
+                        f"Product with ID {item_data['product_id']} not found.")
 
                 quantity = item_data['quantity']
 
-                # Stock validation — protects against overselling. Legacy
-                # products use stock=0 to mean "untracked", so only enforce
-                # when a positive stock level is being tracked.
+                # Stock validation — legacy products use stock=0 for "untracked".
                 if product.stock and quantity > product.stock:
                     raise serializers.ValidationError(
                         f'Only {product.stock} unit(s) of "{product.title[:60]}" left in stock.')
 
-                # Use originalPrice (discounted price) if available, else fall back to price
+                # originalPrice is the selling price; price is the regular price.
                 price = Decimal(str(product.originalPrice if product.originalPrice is not None else product.price))
                 subtotal += price * quantity
-                
-                # Calculate shipping for this product
-                if not product.freeShipping:
-                    # Get shipping options from variants
-                    variants = product.variants or {}
-                    shipping_options = variants.get('shippingOptions', [])
-                    
-                    if shipping_options:
-                        # Find first enabled shipping option
-                        enabled_option = next((opt for opt in shipping_options if opt.get('enabled')), None)
-                        if enabled_option:
-                            item_shipping = Decimal(str(enabled_option.get('price', 0)))
-                            shipping_cost += item_shipping * quantity
-                
+
+                shipping_snapshot = self._select_shipping_option(
+                    product, item_data.get('shipping_type', ''))
+                item_shipping = shipping_snapshot['charge']
+                shipping_cost += item_shipping
+                item_shipping_by_index[len(order_items)] = item_shipping
+                selected_shipping_methods.append(shipping_snapshot)
+
                 order_items.append({
                     'product': product,
                     'product_title': product.title,
                     'product_image': product.image.name if product.image else '',
                     'color': item_data.get('color', ''),
                     'size': item_data.get('size', ''),
-                    'shipping_type': item_data.get('shipping_type', ''),
+                    'shipping_type': shipping_snapshot['name'],
+                    'shipping_charge': shipping_snapshot['charge'],
+                    'shipping_estimated_delivery': shipping_snapshot['estimated_delivery'],
                     'quantity': quantity,
                     'price': price,
                 })
-            
-            # Apply coupon if provided
-            discount = Decimal('0')
+
+            # ---------------- coupons ----------------
+            # A code is either a seller coupon (product-only or shipping-only,
+            # limited to that seller's items) or an admin coupon (product-only,
+            # funded by Platform Balance). Invalid codes reject the checkout.
+            seller_coupon = None
+            admin_coupon = None
+            seller_coupon_discount = Decimal('0')
+            shipping_discount = Decimal('0')
+            admin_split = {}
             coupon_code = validated_data.get('coupon_code', '').strip().upper()
             if coupon_code:
-                try:
-                    # Find valid coupon
-                    coupon = Coupon.objects.get(
-                        code=coupon_code,
-                        is_active=True,
-                        expires_at__gte=timezone.now().date()
-                    )
-                    
-                    # Check if coupon has uses left
-                    if coupon.uses >= coupon.max_uses:
-                        pass  # Coupon used up, no discount
-                    elif subtotal < coupon.min_order_amount:
-                        pass  # Order doesn't meet minimum amount
-                    else:
-                        # Check coupon type eligibility
-                        is_eligible = False
-                        
-                        if coupon.coupon_type == 'all_products':
-                            is_eligible = True
-                        elif coupon.coupon_type == 'first_order':
-                            # Check if this is customer's first order
-                            previous_orders = Order.objects.filter(customer=customer).count()
-                            is_eligible = previous_orders == 0
-                        elif coupon.coupon_type == 'category':
-                            # Check if any product in order belongs to coupon category
-                            if coupon.category:
-                                for item_data in order_items:
-                                    product = item_data['product']
-                                    # Check both category_fk (preferred) and category string
-                                    try:
-                                        if (product.category_fk == coupon.category or 
-                                            (product.category and hasattr(coupon.category, 'name') and 
-                                             product.category.lower() == coupon.category.name.lower())):
-                                            is_eligible = True
-                                            break
-                                    except (AttributeError, TypeError) as e:
-                                        logger.warning(f"Category comparison error for coupon {coupon_code}: {e}")
-                                        continue
-                        elif coupon.coupon_type == 'specific_products':
-                            # Check if any product in order is in coupon's specific products
-                            try:
-                                coupon_product_ids = set(coupon.coupon_products.values_list('product_id', flat=True))
-                                order_product_ids = set(item_data['product'].id for item_data in order_items)
-                                is_eligible = bool(coupon_product_ids.intersection(order_product_ids))
-                            except Exception as e:
-                                logger.warning(f"Specific products coupon check error for {coupon_code}: {e}")
-                                is_eligible = False
-                        
-                        if is_eligible:
-                            if coupon.discount_type == 'percent':
-                                discount = (subtotal * coupon.discount_value / Decimal('100')).quantize(Decimal('0.01'))
-                            elif coupon.discount_type == 'fixed':
-                                discount = min(coupon.discount_value, subtotal)  # Don't exceed order total
-                            elif coupon.discount_type == 'shipping':
-                                discount = shipping_cost
-                            
-                            # Update coupon usage
-                            coupon.uses += 1
-                            coupon.save(update_fields=['uses'])
-                            
-                except Coupon.DoesNotExist:
-                    pass  # Invalid coupon code, no discount
-                except Exception as e:
-                    logger.error(f"Coupon processing error for {coupon_code}: {e}")
-                    # Continue without coupon discount rather than failing the order
-                    pass
-            
-            total_amount = max(Decimal('0'), subtotal + shipping_cost - discount)
+                seller_coupon = Coupon.objects.filter(
+                    code=coupon_code, is_active=True,
+                    expires_at__gte=timezone.now().date()).select_related('seller').first()
+                if seller_coupon:
+                    seller_coupon_discount, shipping_discount = self._apply_seller_coupon(
+                        seller_coupon, customer, order_items, item_shipping_by_index)
+                else:
+                    admin_coupon = AdminCoupon.objects.filter(code=coupon_code).first()
+                    if not admin_coupon:
+                        raise serializers.ValidationError(
+                            {'coupon_code': 'Invalid or expired coupon code.'})
+                    admin_split = self._apply_admin_coupon(
+                        admin_coupon, customer, order_items, subtotal)
 
-            # Redeem store credit against the remaining total when requested
-            from .lifecycle import wallet_balance, debit_wallet, record_status
+            admin_coupon_discount = sum(admin_split.values(), Decimal('0'))
+            # Shipping-only coupons charge less shipping; they never touch
+            # marketplace accounting (spec Part 2 §4).
+            shipping_cost = max(Decimal('0'), shipping_cost - shipping_discount)
+            discount = seller_coupon_discount + admin_coupon_discount
+            unique_methods = {snapshot['name'] for snapshot in selected_shipping_methods if snapshot['name']}
+            unique_estimates = {snapshot['estimated_delivery'] for snapshot in selected_shipping_methods if snapshot['estimated_delivery']}
+            order_shipping_method = (
+                next(iter(unique_methods)) if len(unique_methods) == 1 else 'Multiple shipping methods'
+            )
+            order_shipping_estimate = (
+                next(iter(unique_estimates)) if len(unique_estimates) == 1 else 'Varies by item'
+            )
+
+            goods_value = max(Decimal('0'), subtotal + shipping_cost - discount)
+
+            # The order total is exactly the goods value — no charge is ever
+            # added to it or recorded in the ledger. The 2.5% payment & service
+            # charge exists only as a checkout-time surcharge shown to the
+            # customer and collected by the payment gateway (see payment_views).
+            total_amount = goods_value
+
+            # ---------------- store credit ----------------
             store_credit_used = Decimal('0')
             if validated_data.get('use_store_credit'):
-                balance = wallet_balance(customer)
+                balance = finance_services.customer_wallet_balance(customer)
                 store_credit_used = min(balance, total_amount)
                 total_amount -= store_credit_used
 
-            # Create order
             order = Order.objects.create(
                 customer=customer,
                 order_id=order_id,
@@ -426,12 +618,17 @@ class OrderCreateSerializer(serializers.Serializer):
                 shipping_state=validated_data.get('shipping_state', ''),
                 shipping_zip_code=validated_data.get('shipping_zip_code', ''),
                 shipping_country=validated_data.get('shipping_country', 'Bangladesh'),
-                payment_method=validated_data['payment_method'],
+                payment_method=payment_method,
                 payment_status='pending',
                 subtotal=subtotal,
                 shipping_cost=shipping_cost,
+                shipping_method=order_shipping_method,
+                shipping_estimated_delivery=order_shipping_estimate,
                 discount=discount,
-                coupon_code=coupon_code if discount > 0 else None,
+                coupon_code=coupon_code if (discount > 0 or shipping_discount > 0) else None,
+                seller_coupon_discount=seller_coupon_discount,
+                admin_coupon_discount=admin_coupon_discount,
+                coupon_seller=seller_coupon.seller if seller_coupon else None,
                 store_credit_used=store_credit_used,
                 total_amount=total_amount,
                 status='pending',
@@ -439,43 +636,53 @@ class OrderCreateSerializer(serializers.Serializer):
                 delivery_instructions=validated_data.get('delivery_instructions', '') or None,
             )
 
-            # Charge the redeemed store credit and open the audit trail
+            # Record coupon usage now that the order exists.
+            if seller_coupon and (seller_coupon_discount > 0 or shipping_discount > 0):
+                seller_coupon.uses += 1
+                seller_coupon.save(update_fields=['uses'])
+            if admin_coupon and admin_split:
+                for seller_id, share in admin_split.items():
+                    AdminCouponRedemption.objects.create(
+                        coupon=admin_coupon, order=order,
+                        seller_id=seller_id, amount=share, status='pending')
+                admin_coupon.uses += 1
+                admin_coupon.save(update_fields=['uses', 'updated_at'])
+
+            # Hold the redeemed store credit in the ledger until payment settles
+            # (released automatically if the order is cancelled before payment).
             if store_credit_used > 0:
-                debit_wallet(customer, store_credit_used, source='order',
-                             note=f'Used on order {order.order_id}', order=order)
+                finance_services.hold_wallet_credit(order, store_credit_used, actor=customer)
+
+            from .lifecycle import record_status
             record_status(order, '', 'pending', actor=customer, note='Order placed')
 
             # Create order items, reserve stock and update sold counters
             for item_data in order_items:
                 OrderItem.objects.create(order=order, **item_data)
+                product = item_data['product']
+                product.sold_count += item_data['quantity']
+                update_fields = ['sold_count']
+                if product.stock is not None and product.stock > 0:
+                    product.stock = max(0, product.stock - item_data['quantity'])
+                    update_fields.append('stock')
+                product.save(update_fields=update_fields)
 
-                try:
-                    product = item_data['product']
-                    product.sold_count += item_data['quantity']
-                    update_fields = ['sold_count']
-                    if product.stock is not None and product.stock > 0:
-                        product.stock = max(0, product.stock - item_data['quantity'])
-                        update_fields.append('stock')
-                    product.save(update_fields=update_fields)
-                except Exception as e:
-                    logger.warning(f"Failed to update counters for product {product.id}: {e}")
-                    # Continue without updating counters rather than failing the order
-            
-            # Send email notifications only for non-UddoktaPay orders.
-            # For UddoktaPay, emails are deferred until payment is confirmed via IPN
-            # so the seller never gets notified about an unpaid order.
-            if order.payment_method != 'uddoktapay':
-                try:
-                    self._send_order_notifications(order)
-                except Exception as e:
-                    logger.error(f"Failed to send order notifications for order {order.order_id}: {e}")
-                    # Continue without failing the order creation
-            
-            return order
-            
-        except Exception as e:
-            logger.error(f"Order creation failed: {e}")
-            raise
+            # Fully wallet-funded online orders need no gateway step. They are
+            # marked paid but kept Pending (visible to the seller, cancellable).
+            if not is_cod and order.total_amount == 0 and store_credit_used > 0:
+                order.payment_status = 'paid'
+                order.save(update_fields=['payment_status'])
+
+        # Send email notifications only for non-UddoktaPay orders.
+        # For UddoktaPay, emails are deferred until payment is confirmed via IPN
+        # so the seller never gets notified about an unpaid order.
+        if order.payment_method != 'uddoktapay' or order.payment_status == 'paid':
+            try:
+                self._send_order_notifications(order)
+            except Exception as e:
+                logger.error(f"Failed to send order notifications for order {order.order_id}: {e}")
+
+        return order
     
     def _send_order_notifications(self, order):
         """Send email notifications for new order"""
@@ -532,7 +739,7 @@ class OrderCreateSerializer(serializers.Serializer):
                     'country': order.shipping_country,
                 },
                 'payment_method': order.payment_method,
-                'estimated_delivery': '3-5 business days',
+                'estimated_delivery': order.shipping_estimated_delivery or 'Contact seller for details',
                 'tracking_url': f"{getattr(settings, 'FRONTEND_URL', 'http://54.169.101.239')}/orders/{order.order_id}",
                 'site_name': getattr(settings, 'SITE_NAME', 'Flypick'),
                 'current_year': timezone.now().year,
@@ -549,7 +756,7 @@ class OrderCreateSerializer(serializers.Serializer):
                 <p>Thank you for your order! Your order has been confirmed.</p>
                 <p><strong>Order ID:</strong> {order.order_id}</p>
                 <p><strong>Total Amount:</strong> ৳{order.total_amount}</p>
-                <p><strong>Estimated Delivery:</strong> 3-5 business days</p>
+                <p><strong>Estimated Delivery:</strong> {context['estimated_delivery']}</p>
                 <p>You can track your order at: <a href="{context['tracking_url']}">Track Order</a></p>
                 <p>Thank you for shopping with {context['site_name']}!</p>
                 """

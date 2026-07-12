@@ -13,6 +13,11 @@ class CustomUser(AbstractUser):
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
 
+    def save(self, *args, **kwargs):
+        if self.is_superuser:
+            self.role = 'Admin'
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.email
 
@@ -41,6 +46,7 @@ class SellerProfile(models.Model):
     additional_info = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     idDocument = models.CharField(max_length=255, blank=True, null=True)
+    id_photo = models.ImageField(upload_to='id_documents/', blank=True, null=True)
     bankAccount = models.CharField(max_length=255, blank=True, null=True)
     verified = models.BooleanField(default=False)
     reviewed_at = models.DateTimeField(blank=True, null=True)

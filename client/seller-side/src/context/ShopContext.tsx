@@ -37,7 +37,7 @@ const ShopContext = createContext<ShopContextType | undefined>(undefined);
 const mapShop = (shop: any): Shop => ({
   id: String(shop?.id ?? ""),
   name: shop?.name || "Shop",
-  logo: "🏪",
+  logo: shop?.logo || "🏪",
   category: shop?.category || "General",
   description: shop?.description || "",
   senderName: shop?.sender_name || "",
@@ -61,6 +61,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
+      setShops([]);
+      setCurrentShopState(null);
+      setIsLoading(false);
+      return;
+    }
+
+    if (user.role !== "Seller") {
       setShops([]);
       setCurrentShopState(null);
       setIsLoading(false);

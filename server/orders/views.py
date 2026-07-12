@@ -44,22 +44,31 @@ class OrderViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
     
     def get_queryset(self):
+        from django.db.models import Q
         user = self.request.user
         shop_id = self.request.query_params.get('shop')
-        
+
         if is_admin_user(user):
             queryset = Order.objects.all().prefetch_related('items', 'items__product', 'items__product__shop')
         elif user.role == 'Seller':
             # Sellers see orders that contain items from their shops
             shop_ids = user.shops.values_list('id', flat=True)
             queryset = Order.objects.filter(items__product__shop_id__in=shop_ids).distinct().prefetch_related('items', 'items__product', 'items__product__shop')
+            # Online (prepaid) orders are hidden from the seller until payment
+            # succeeds — the seller must never see or act on an unpaid online
+            # order. COD orders appear immediately (payment is collected on
+            # delivery). Applies to every seller list.
+            cod_methods = ['cod', 'cash_on_delivery']
+            queryset = queryset.filter(
+                Q(payment_method__in=cod_methods) | Q(payment_status='paid')
+            )
         else:
             queryset = Order.objects.filter(customer=user).prefetch_related('items', 'items__product', 'items__product__shop')
-        
+
         # Filter by specific shop if provided
         if shop_id:
             queryset = queryset.filter(items__product__shop_id=shop_id).distinct()
-        
+
         return queryset
     
     def get_serializer_class(self):
@@ -78,133 +87,110 @@ class OrderViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def validate_coupon(self, request):
-        """Validate a coupon code for the current user and cart items"""
+        """Validate a coupon code for the current user and cart items.
+
+        Uses the exact same rules as checkout (OrderCreateSerializer):
+        seller coupons apply per-seller to products or shipping only,
+        admin coupons apply to product prices funded by Platform Balance.
+        """
         from decimal import Decimal
         from django.utils import timezone
+        from rest_framework.exceptions import ValidationError as DRFError
         from seller.models import Coupon
-        
+        from finance.models import AdminCoupon
+        from products.models import Product
+        from .serializers import OrderCreateSerializer
+
         coupon_code = request.data.get('coupon_code', '').strip().upper()
         cart_items = request.data.get('cart_items', [])  # List of {product_id, quantity}
-        
+
         if not coupon_code:
-            return Response({
-                'valid': False,
-                'error': 'Coupon code is required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({'valid': False, 'error': 'Coupon code is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
         if not cart_items:
-            return Response({
-                'valid': False,
-                'error': 'Cart items are required'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
+            return Response({'valid': False, 'error': 'Cart items are required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        helper = OrderCreateSerializer()
+
+        def error_text(exc):
+            detail = exc.detail
+            if isinstance(detail, dict):
+                detail = next(iter(detail.values()))
+            if isinstance(detail, (list, tuple)):
+                detail = detail[0]
+            return str(detail)
+
+        # Build the same item structures the checkout uses.
+        order_items = []
+        item_shipping_by_index = {}
+        subtotal = Decimal('0')
+        for item in cart_items:
+            try:
+                product = Product.objects.select_related('shop__seller').get(id=item['product_id'])
+            except Product.DoesNotExist:
+                continue
+            quantity = int(item.get('quantity', 1))
+            price = Decimal(str(product.originalPrice if product.originalPrice is not None else product.price))
+            subtotal += price * quantity
+
+            try:
+                shipping_snapshot = helper._select_shipping_option(product, item.get('shipping_type', ''))
+                item_shipping = shipping_snapshot['charge']
+            except DRFError as exc:
+                return Response({'valid': False, 'error': error_text(exc)})
+            item_shipping_by_index[len(order_items)] = item_shipping
+            order_items.append({'product': product, 'price': price, 'quantity': quantity})
+
+        if not order_items:
+            return Response({'valid': False, 'error': 'No valid products in cart'})
+
         try:
-            # Find the coupon
-            coupon = Coupon.objects.get(
-                code=coupon_code,
-                is_active=True,
-                expires_at__gte=timezone.now().date()
-            )
-            
-            # Check if coupon has uses left
-            if coupon.uses >= coupon.max_uses:
-                return Response({
-                    'valid': False,
-                    'error': 'This coupon has been used up'
-                })
-            
-            # Calculate subtotal from cart items
-            from products.models import Product
-            subtotal = Decimal('0')
-            products = []
-            
-            for item in cart_items:
+            seller_coupon = Coupon.objects.filter(
+                code=coupon_code, is_active=True,
+                expires_at__gte=timezone.now().date()).select_related('seller').first()
+            if seller_coupon:
                 try:
-                    product = Product.objects.get(id=item['product_id'])
-                    quantity = int(item.get('quantity', 1))
-                    subtotal += product.price * quantity
-                    products.append(product)
-                except Product.DoesNotExist:
-                    continue
-            
-            # Check minimum order amount
-            if subtotal < coupon.min_order_amount:
+                    product_discount, shipping_discount = helper._apply_seller_coupon(
+                        seller_coupon, request.user, order_items, item_shipping_by_index)
+                except DRFError as exc:
+                    return Response({'valid': False, 'error': error_text(exc)})
                 return Response({
-                    'valid': False,
-                    'error': f'Minimum order amount ৳{coupon.min_order_amount} required'
+                    'valid': True,
+                    'coupon': {
+                        'code': seller_coupon.code,
+                        'discount_type': seller_coupon.discount_type,
+                        'discount_value': float(seller_coupon.discount_value),
+                        'discount_amount': float(product_discount + shipping_discount),
+                        'coupon_type': seller_coupon.coupon_type,
+                        'source': 'seller',
+                    }
                 })
-            
-            # Check coupon type eligibility
-            is_eligible = False
-            
-            if coupon.coupon_type == 'all_products':
-                is_eligible = True
-            elif coupon.coupon_type == 'first_order':
-                # Check if this is customer's first order
-                previous_orders = Order.objects.filter(customer=request.user).count()
-                is_eligible = previous_orders == 0
-                if not is_eligible:
-                    return Response({
-                        'valid': False,
-                        'error': 'This coupon is only valid for first-time customers'
-                    })
-            elif coupon.coupon_type == 'category':
-                # Check if any product in cart belongs to coupon category
-                if coupon.category:
-                    for product in products:
-                        # Check both category_fk (preferred) and category string
-                        if (product.category_fk == coupon.category or 
-                            (product.category and product.category.lower() == coupon.category.name.lower())):
-                            is_eligible = True
-                            break
-                    if not is_eligible:
-                        return Response({
-                            'valid': False,
-                            'error': f'This coupon is only valid for {coupon.category.name} products'
-                        })
-            elif coupon.coupon_type == 'specific_products':
-                # Check if any product in cart is in coupon's specific products
-                coupon_product_ids = set(coupon.coupon_products.values_list('product_id', flat=True))
-                cart_product_ids = set(product.id for product in products)
-                is_eligible = bool(coupon_product_ids.intersection(cart_product_ids))
-                if not is_eligible:
-                    return Response({
-                        'valid': False,
-                        'error': 'This coupon is not valid for the products in your cart'
-                    })
-            
-            if not is_eligible:
+
+            admin_coupon = AdminCoupon.objects.filter(code=coupon_code).first()
+            if admin_coupon:
+                try:
+                    split = helper._apply_admin_coupon(
+                        admin_coupon, request.user, order_items, subtotal)
+                except DRFError as exc:
+                    return Response({'valid': False, 'error': error_text(exc)})
+                total_discount = sum(split.values(), Decimal('0'))
                 return Response({
-                    'valid': False,
-                    'error': 'This coupon is not applicable to your order'
+                    'valid': True,
+                    'coupon': {
+                        'code': admin_coupon.code,
+                        'discount_type': admin_coupon.discount_type,
+                        'discount_value': float(admin_coupon.discount_value),
+                        'discount_amount': float(total_discount),
+                        'coupon_type': admin_coupon.scope,
+                        'source': 'admin',
+                    }
                 })
-            
-            # Calculate discount
-            discount = Decimal('0')
-            if coupon.discount_type == 'percent':
-                discount = (subtotal * coupon.discount_value / Decimal('100')).quantize(Decimal('0.01'))
-            elif coupon.discount_type == 'fixed':
-                discount = min(coupon.discount_value, subtotal)  # Don't exceed order total
-            elif coupon.discount_type == 'shipping':
-                discount = Decimal('0')  # Will be applied to shipping cost
-            
-            return Response({
-                'valid': True,
-                'coupon': {
-                    'code': coupon.code,
-                    'discount_type': coupon.discount_type,
-                    'discount_value': float(coupon.discount_value),
-                    'discount_amount': float(discount),
-                    'coupon_type': coupon.coupon_type
-                }
-            })
-            
-        except Coupon.DoesNotExist:
-            return Response({
-                'valid': False,
-                'error': 'Invalid coupon code'
-            })
-        except Exception as e:
+
+            return Response({'valid': False, 'error': 'Invalid coupon code'})
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('Coupon validation failed for %s', coupon_code)
             return Response({
                 'valid': False,
                 'error': 'An error occurred while validating the coupon'
@@ -288,9 +274,22 @@ class OrderViewSet(viewsets.ModelViewSet):
             'count': len(applicable_coupons)
         })
 
+    # Payment-related fields may only be changed by an admin (spec: sellers
+    # have no authority over payment management; the customer's choice at
+    # checkout is final).
+    PAYMENT_FIELDS = {'payment_status', 'payment_method', 'total_amount',
+                      'subtotal', 'discount', 'store_credit_used', 'platform_charge'}
+
     def partial_update(self, request, *args, **kwargs):
         # Status changes always go through the lifecycle service so the
         # legacy seller UI (bare PATCH {status}) gets validation + audit too.
+        if not is_admin_user(request.user):
+            attempted = self.PAYMENT_FIELDS.intersection(request.data.keys())
+            if attempted:
+                return Response(
+                    {'detail': 'Only an administrator can modify payment information.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         new_status = request.data.get('status')
         if new_status:
             order = self.get_object()
@@ -310,9 +309,16 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'])
     def cancel(self, request, pk=None):
-        """Customer cancellation with reason. Auto-approved before shipment
-        (configurable via ORDER_CANCELLABLE_STATUSES); paid orders open a
-        refund case automatically."""
+        """Customer cancellation. Allowed ONLY while the order is Pending.
+
+        The customer supplies a reason and a refund method:
+          - store_credit: the refund completes instantly (money moves from the
+            seller's Marketplace Balance / Seller Payable to the Customer Wallet).
+          - original: a refund request is opened for the Admin to process through
+            the original payment method. The seller takes no action.
+        Unpaid orders (COD, or online not yet paid) simply cancel and any held
+        store credit is released automatically.
+        """
         order = self.get_object()
 
         if order.customer != request.user and not is_admin_user(request.user):
@@ -325,40 +331,41 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status not in cancellable and not is_admin_user(request.user):
             return Response(
                 {'detail': f'Cannot cancel an order that is already "{order.get_status_display()}". '
-                           'Please request a return after delivery instead.'},
+                           'You can only cancel while the order is pending; after that, '
+                           'please request a return once it is delivered.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         reason = (request.data.get('reason') or 'Cancelled by customer').strip()
+        refund_method = (request.data.get('refund_method') or 'original').strip()
+        if refund_method not in ('store_credit', 'original'):
+            refund_method = 'original'
+
+        from .lifecycle import full_refund_amount
+        needs_refund = order.payment_status == 'paid' and full_refund_amount(order) > 0
+
         transition_order(order, 'cancelled', actor=request.user, note=reason)
 
-        # Paid orders get their money back through the refund workflow
         refund = None
-        if order.payment_status == 'paid' and order.total_amount > 0:
+        if needs_refund:
+            # store_credit -> instant; original -> opened 'approved' awaiting the
+            # admin to settle it via the original payment method.
             refund = create_refund(
-                order, order.total_amount,
-                method='original', refund_type='full',
+                order, full_refund_amount(order),
+                method=refund_method, refund_type='full',
                 reason=f'Order cancelled: {reason}'[:255],
                 requested_by=request.user,
-                note='Automatically opened on cancellation of a paid order',
+                initial_status='approved',
+                origin='cancellation',
+                note='Opened on cancellation of a paid order',
             )
-        # Money paid from store credit always returns instantly
-        if order.store_credit_used and order.store_credit_used > 0:
-            credit_back = create_refund(
-                order, order.store_credit_used,
-                method='store_credit', refund_type='partial' if refund else 'full',
-                reason='Store credit returned after cancellation',
-                requested_by=request.user,
-                initial_status='requested',
-            )
-            transition_refund(credit_back, 'approved', actor=request.user,
-                              note='Auto-approved store credit return')
-            transition_refund(credit_back, 'completed', actor=request.user)
 
         serializer = OrderSerializer(order, context={'request': request})
         data = serializer.data
         if refund:
             data['refund_id'] = refund.refund_id
+            data['refund_status'] = refund.status
+            data['refund_method'] = refund.method
         return Response(data)
 
     @action(detail=True, methods=['post'])
@@ -402,10 +409,16 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        """Seller/admin records an offline payment (e.g. COD collected)."""
+        """Admin-only: record/correct a payment.
+
+        Sellers can no longer mark orders paid — the payment method is fixed at
+        checkout, and COD orders are marked paid automatically on delivery.
+        This remains available to admins for corrections from the Admin Orders
+        page. The finance ledger is posted via the Order post_save signal.
+        """
         order = self.get_object()
-        if not _can_manage_order(request.user, order):
-            return Response({'detail': 'Only sellers and admins can record payments.'},
+        if not is_admin_user(request.user):
+            return Response({'detail': 'Only an administrator can record or change payments.'},
                             status=status.HTTP_403_FORBIDDEN)
         if order.payment_status == 'paid':
             return Response({'detail': 'This order is already marked as paid.'},
@@ -418,9 +431,194 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.save(update_fields=['payment_status', 'payment_method', 'updated_at'])
         record_status(
             order, order.status, order.status, actor=request.user,
-            note=f'Payment received via {method}' + (f' — {note}' if note else ''),
+            note=f'Payment recorded by admin via {method}' + (f' — {note}' if note else ''),
         )
         return Response(OrderSerializer(order, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def admin_search(self, request):
+        """Admin Orders page: look an order up by its Order ID and return the
+        full order plus its complete financial (ledger) history. Admin only."""
+        if not is_admin_user(request.user):
+            return Response({'detail': 'Administrators only.'}, status=status.HTTP_403_FORBIDDEN)
+
+        order_id = (request.query_params.get('order_id') or '').strip()
+        if not order_id:
+            return Response({'detail': 'order_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        order = (Order.objects
+                 .filter(order_id__iexact=order_id)
+                 .prefetch_related('items', 'items__product', 'items__product__shop').first())
+        if not order:
+            return Response({'detail': f'No order found with ID "{order_id}".'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        data = OrderSerializer(order, context={'request': request}).data
+        data.update(self._order_audit(order, request, full=True))
+        return Response(data)
+
+    @staticmethod
+    def _order_audit(order, request, *, full):
+        """Assemble the full audit view of an order: every timeline, history
+        and operation log. ``full`` includes real actor identities (admin);
+        otherwise identities are role-masked for the seller view."""
+        from .serializers import RefundSerializer
+
+        history = list(order.status_history.select_related('changed_by').all())
+
+        def actor_label(user):
+            if not user:
+                return 'System'
+            role = getattr(user, 'role', '')
+            if full:
+                return f'{user.get_full_name() or user.username} ({role or "user"})'
+            # Seller view: mask customer/admin identities.
+            if role in ('Admin',) or user.is_superuser:
+                return 'Flypick'
+            if role == 'Seller':
+                return 'You'
+            return 'Customer'
+
+        def is_seller_actor(user):
+            return bool(user and getattr(user, 'role', '') == 'Seller')
+
+        def is_admin_actor(user):
+            return bool(user and (getattr(user, 'role', '') == 'Admin' or user.is_superuser))
+
+        status_events = [{
+            'from_status': h.from_status,
+            'to_status': h.to_status,
+            'note': h.note,
+            'actor': actor_label(h.changed_by),
+            'actor_role': getattr(h.changed_by, 'role', '') if h.changed_by else '',
+            'created_at': h.created_at,
+        } for h in history]
+
+        # Tracking / shipping timeline: the fulfilment-related status steps.
+        tracking_steps = {'confirmed', 'processing', 'packed', 'shipped',
+                          'out_for_delivery', 'delivered'}
+        tracking_timeline = [e for e in status_events if e['to_status'] in tracking_steps]
+
+        # Payment timeline: ledger events + payment-related status notes.
+        payment_timeline = []
+        from finance.models import LedgerTransaction
+        for txn in (LedgerTransaction.objects.filter(order=order)
+                    .order_by('created_at')):
+            payment_timeline.append({
+                'event': txn.get_txn_type_display(),
+                'txn_type': txn.txn_type,
+                'note': txn.notes,
+                'created_at': txn.created_at,
+            })
+        for e in status_events:
+            if 'payment' in (e['note'] or '').lower():
+                payment_timeline.append({
+                    'event': 'Payment note', 'txn_type': 'note',
+                    'note': e['note'], 'created_at': e['created_at']})
+        payment_timeline.sort(key=lambda x: x['created_at'])
+
+        audit = {
+            'status_history': status_events,
+            'tracking_timeline': tracking_timeline,
+            'payment_timeline': payment_timeline,
+            'seller_activities': [e for e in status_events
+                                  if e['actor_role'] == 'Seller'],
+            'shipping': {
+                'method': order.shipping_method,
+                'estimated_delivery': order.shipping_estimated_delivery,
+                'courier_name': order.courier_name,
+                'tracking_number': order.tracking_number,
+            },
+            'refunds': RefundSerializer(
+                order.refunds.all(), many=True, context={'request': request}).data,
+        }
+        if full:
+            audit['financial_history'] = OrderViewSet._order_financial_history(order)
+            # Operation logs: every recorded change with actor + note.
+            audit['operation_logs'] = [{
+                'action': f'{e["from_status"] or "—"} → {e["to_status"]}',
+                'note': e['note'], 'actor': e['actor'], 'created_at': e['created_at'],
+            } for e in status_events]
+            # Seller (shop owner) identity for the order.
+            shops = {i.product.shop for i in order.items.all()
+                     if i.product and i.product.shop}
+            audit['sellers'] = [{
+                'shop': s.name, 'seller_email': s.seller.email,
+                'seller_name': s.seller.get_full_name() or s.seller.username,
+            } for s in shops]
+        return audit
+
+    @action(detail=True, methods=['get'])
+    def seller_detail(self, request, pk=None):
+        """Rich order view for the seller: timelines and histories with
+        customer/admin identities masked. Sellers and admins only."""
+        order = self.get_object()
+        if not _can_manage_order(request.user, order):
+            return Response({'detail': 'Not allowed.'}, status=status.HTTP_403_FORBIDDEN)
+        data = OrderSerializer(order, context={'request': request}).data
+        data.update(self._order_audit(order, request, full=False))
+        return Response(data)
+
+    @action(detail=True, methods=['get'])
+    def financial_history(self, request, pk=None):
+        """Admin-only ledger history for a single order."""
+        if not is_admin_user(request.user):
+            return Response({'detail': 'Administrators only.'}, status=status.HTTP_403_FORBIDDEN)
+        order = self.get_object()
+        return Response({'financial_history': self._order_financial_history(order)})
+
+    @staticmethod
+    def _order_financial_history(order):
+        from finance.models import LedgerTransaction
+        from finance.serializers import LedgerTransactionSerializer
+        txns = (LedgerTransaction.objects.filter(order=order)
+                .select_related('order', 'refund', 'withdrawal', 'coupon', 'created_by')
+                .prefetch_related('entries__account__user')
+                .order_by('-created_at'))
+        return LedgerTransactionSerializer(txns, many=True).data
+
+    @action(detail=True, methods=['post'])
+    def admin_payment_action(self, request, pk=None):
+        """Admin-only: set an order's payment status/method for corrections.
+
+        Setting status to 'paid' triggers the finance ledger via the Order
+        post_save signal. Sellers have no access to this.
+        """
+        if not is_admin_user(request.user):
+            return Response({'detail': 'Only an administrator can manage payments.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        order = self.get_object()
+        new_status = (request.data.get('payment_status') or '').strip()
+        new_method = (request.data.get('payment_method') or '').strip()
+        note = (request.data.get('note') or '').strip()
+
+        valid = dict(Order.PAYMENT_STATUS_CHOICES)
+        if new_status and new_status not in valid:
+            return Response({'detail': f'Invalid payment status "{new_status}".'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        update_fields = ['updated_at']
+        changes = []
+        if new_method and new_method != order.payment_method:
+            changes.append(f'method {order.payment_method}→{new_method}')
+            order.payment_method = new_method[:50]
+            update_fields.append('payment_method')
+        if new_status and new_status != order.payment_status:
+            changes.append(f'status {order.payment_status}→{new_status}')
+            order.payment_status = new_status
+            update_fields.append('payment_status')
+
+        if not changes:
+            return Response({'detail': 'No payment changes provided.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        order.save(update_fields=update_fields)  # signal posts ledger when paid
+        record_status(order, order.status, order.status, actor=request.user,
+                      note=f'Admin payment update: {"; ".join(changes)}'
+                           + (f' — {note}' if note else ''))
+        data = OrderSerializer(order, context={'request': request}).data
+        data['financial_history'] = self._order_financial_history(order)
+        return Response(data)
 
     @action(detail=True, methods=['get'])
     def timeline(self, request, pk=None):
@@ -690,7 +888,10 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
         # Prefer the method the customer chose when filing the return
         refund_method = request.data.get('refund_method') or return_request.refund_method or 'original'
 
-        if new_status not in ['pending', 'info_requested', 'approved', 'rejected', 'refunded']:
+        # 'refunded' is reached automatically when the linked refund completes
+        # (store-credit instantly, or COD/online once settled) — it is not a
+        # status the seller sets directly.
+        if new_status not in ['pending', 'info_requested', 'approved', 'rejected']:
             return Response(
                 {'detail': 'Invalid status value.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -705,44 +906,29 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
         return_request.save()
 
         refund = None
-        if new_status == 'refunded' and previous_status != 'refunded':
-            # Legacy seller flow: marking the return "refunded" completes the
-            # linked refund case (creating one first if it doesn't exist).
-            order = return_request.order
-            amount = return_request.refund_amount or order.total_amount
-            open_refund = return_request.refunds.exclude(status__in=['rejected', 'completed']).first()
-            if not open_refund and not return_request.refunds.filter(status='completed').exists():
-                open_refund = create_refund(
-                    order, amount,
-                    method=refund_method if refund_method in ('original', 'store_credit', 'manual') else 'original',
-                    refund_type='full' if amount >= order.total_amount else 'partial',
-                    reason=f'Return {return_request.return_id} refunded',
-                    requested_by=order.customer,
-                    return_request=return_request,
-                    initial_status='approved',
-                )
-            if open_refund:
-                if open_refund.status in ('requested', 'under_review'):
-                    transition_refund(open_refund, 'approved', actor=request.user, note=admin_note)
-                if open_refund.status == 'approved':
-                    transition_refund(open_refund, 'processing', actor=request.user)
-                if open_refund.status == 'processing':
-                    transition_refund(open_refund, 'completed', actor=request.user,
-                                      note='Refund processed from return request')
-
         if new_status == 'approved' and previous_status != 'approved':
-            # Open a refund case for the agreed amount
+            # Approving a return opens the refund case (full paid amount only).
+            # How it completes depends on the method and payment type:
+            #   - store_credit: completes INSTANTLY (create_refund auto-finishes).
+            #   - original + COD: the SELLER settles it (txn id + optional proof).
+            #   - original + online: forwarded to the ADMIN to settle.
+            from .lifecycle import full_refund_amount
             order = return_request.order
-            amount = return_request.refund_amount or order.total_amount
+            amount = full_refund_amount(order)
+            if order.payment_status != 'paid':
+                return Response(
+                    {'detail': 'This order is not paid, so there is nothing to refund.'},
+                    status=status.HTTP_400_BAD_REQUEST)
             if not return_request.refunds.exclude(status='rejected').exists():
                 refund = create_refund(
                     order, amount,
-                    method=refund_method if refund_method in ('original', 'store_credit', 'manual') else 'original',
-                    refund_type='full' if amount >= order.total_amount else 'partial',
+                    method=refund_method if refund_method in ('original', 'store_credit') else 'original',
+                    refund_type='full',
                     reason=f'Return {return_request.return_id} approved',
                     requested_by=order.customer,
                     return_request=return_request,
                     initial_status='approved',
+                    origin='return',
                     note=admin_note or 'Return approved',
                 )
             try:
@@ -750,6 +936,15 @@ class ReturnRequestViewSet(viewsets.ModelViewSet):
                                  note=f'Return {return_request.return_id} approved')
             except DRFValidationError:
                 pass  # order may not be in a returnable status anymore
+
+        if new_status == 'rejected' and previous_status != 'rejected':
+            # Reject any open refund tied to this return.
+            for open_refund in return_request.refunds.exclude(status__in=['completed', 'rejected']):
+                try:
+                    transition_refund(open_refund, 'rejected', actor=request.user,
+                                      note=admin_note or 'Return rejected')
+                except DRFValidationError:
+                    pass
 
         # Notify the customer about the review outcome
         try:
@@ -790,13 +985,32 @@ class RefundViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        base = Refund.objects.select_related('order').prefetch_related('events')
+        base = (Refund.objects.select_related('order', 'return_request', 'settled_by')
+                .prefetch_related('events'))
         if is_admin_user(user):
-            return base
-        if getattr(user, 'role', '') == 'Seller':
+            qs = base
+        elif getattr(user, 'role', '') == 'Seller':
             shop_ids = user.shops.values_list('id', flat=True)
-            return base.filter(order__items__product__shop_id__in=shop_ids).distinct()
-        return base.filter(order__customer=user)
+            qs = base.filter(order__items__product__shop_id__in=shop_ids).distinct()
+        else:
+            qs = base.filter(order__customer=user)
+
+        # Optional status filter (e.g. ?status=approved for pending queues).
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        # queue=awaiting_settlement returns the refunds this user must settle:
+        # admins settle online refunds, sellers settle their COD refunds.
+        queue = self.request.query_params.get('queue')
+        if queue == 'awaiting_settlement':
+            cod_methods = ['cod', 'cash_on_delivery']
+            qs = qs.filter(status='approved').exclude(method='store_credit')
+            if is_admin_user(user):
+                qs = qs.exclude(order__payment_method__in=cod_methods)
+            else:
+                qs = qs.filter(order__payment_method__in=cod_methods)
+        return qs
 
     def create(self, request, *args, **kwargs):
         """Create a refund.
@@ -820,40 +1034,37 @@ class RefundViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'detail': 'Please provide a reason for the refund.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        from .lifecycle import full_refund_amount
+
         # ---------- seller / admin: process a refund now ----------
         if is_manager:
             order = Order.objects.filter(order_id=order_id).first()
             if not order or not _can_manage_order(request.user, order):
                 return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-            try:
-                amount = Decimal(str(request.data.get('amount') or order.total_amount))
-            except InvalidOperation:
-                return Response({'detail': 'Invalid refund amount.'}, status=status.HTTP_400_BAD_REQUEST)
+            # One refund per order, always the full paid amount (no partials).
+            amount = full_refund_amount(order)
+            requested = request.data.get('amount')
+            if requested is not None:
+                try:
+                    if Decimal(str(requested)) != amount:
+                        return Response(
+                            {'detail': f'Partial refunds are not supported. The refund must be '
+                                       f'the full paid amount of {amount}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+                except InvalidOperation:
+                    return Response({'detail': 'Invalid refund amount.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            from django.db.models import Sum
-            already_refunded = (
-                order.refunds.filter(status='completed').aggregate(total=Sum('amount'))['total']
-                or Decimal('0')
-            )
-            refundable = order.total_amount - already_refunded
-            if amount <= 0 or amount > refundable:
-                return Response(
-                    {'detail': f'Refund amount must be between 0 and {refundable} '
-                               '(order total minus already-refunded amounts).'},
-                    status=status.HTTP_400_BAD_REQUEST)
-
-            refund_type = 'full' if amount >= refundable and already_refunded == 0 else 'partial'
+            # store_credit completes instantly; original refunds are opened in
+            # 'approved' and must be settled (seller for COD, admin for online).
             refund = create_refund(
-                order, amount, method=method, refund_type=refund_type,
+                order, amount, method=method, refund_type='full',
                 reason=reason, requested_by=request.user,
-                initial_status='approved',
+                initial_status='approved', origin='manual',
                 note=f'Initiated by {"admin" if is_admin_user(request.user) else "seller"}',
             )
-            transition_refund(refund, 'processing', actor=request.user)
-            transition_refund(refund, 'completed', actor=request.user,
-                              note=(request.data.get('note') or '').strip())
-            return Response(RefundSerializer(refund).data, status=status.HTTP_201_CREATED)
+            return Response(RefundSerializer(refund, context={'request': request}).data,
+                            status=status.HTTP_201_CREATED)
 
         # ---------- customer: open a refund request ----------
         try:
@@ -869,7 +1080,7 @@ class RefundViewSet(viewsets.ReadOnlyModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
 
         refund = create_refund(
-            order, order.total_amount,
+            order, full_refund_amount(order),
             method=method if method in ('original', 'store_credit') else 'original',
             refund_type='full', reason=reason, requested_by=request.user,
         )
@@ -887,7 +1098,40 @@ class RefundViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'detail': 'status is required.'}, status=status.HTTP_400_BAD_REQUEST)
         transition_refund(refund, new_status, actor=request.user,
                           note=request.data.get('note', ''))
-        return Response(RefundSerializer(refund).data)
+        return Response(RefundSerializer(refund, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def settle(self, request, pk=None):
+        """Complete an approved original-payment-method refund.
+
+        The seller settles COD refunds; the admin settles online refunds. The
+        settler records the transaction ID (required) and an optional proof.
+        Store-credit refunds never reach here — they complete instantly.
+        """
+        from .lifecycle import settle_refund
+
+        refund = self.get_object()
+        owner = refund.settlement_owner
+        is_admin = is_admin_user(request.user)
+        is_seller = getattr(request.user, 'role', '') == 'Seller' and _can_manage_order(request.user, refund.order)
+
+        if owner == 'admin' and not is_admin:
+            return Response({'detail': 'Only an administrator can settle an online refund.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if owner == 'seller' and not (is_seller or is_admin):
+            return Response({'detail': 'Only the seller can settle this COD refund.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        if owner == 'none':
+            return Response({'detail': 'Store-credit refunds complete automatically.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        settle_refund(
+            refund, actor=request.user,
+            transaction_id=(request.data.get('transaction_id') or '').strip(),
+            proof=request.FILES.get('proof'),
+            note=(request.data.get('note') or '').strip(),
+        )
+        return Response(RefundSerializer(refund, context={'request': request}).data)
 
 
 @api_view(['GET'])

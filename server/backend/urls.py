@@ -36,6 +36,7 @@ urlpatterns = [
     path('api/promotions/', include('promotions.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/importer/', include('importer.urls')),
+    path('api/finance/', include('finance.urls')),
 ]
 
 if settings.DEBUG:

@@ -26,11 +26,41 @@ import { SourceInformation } from "@/components/SourceInformation";
 interface SizeStock { size: string; stock: number; }
 interface Specification { key: string; value: string; }
 interface GuideDoc { name: string; type: string; }
-interface ShippingOption { type: string; price: string; estimatedDelivery: string; enabled: boolean; freeShipping: boolean; }
+interface ShippingOption { methodId?: number; type: string; price: string; estimatedDelivery: string; description?: string; enabled: boolean; freeShipping: boolean; }
+interface AdminShippingMethod { id: number; name: string; delivery_charge: string | null; estimated_delivery_time: string; description?: string; is_enabled: boolean; sort_order: number; }
 
-const shippingTypes = ["Standard", "Express", "Free Shipping", "Flat Rate", "Calculated"];
 const sizeOptions = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "28", "30", "32", "34", "36", "38", "40", "42"];
 const colorOptions = ["Black", "White", "Red", "Blue", "Green", "Yellow", "Pink", "Purple", "Orange", "Gray", "Brown", "Navy"];
+const defaultShippingOptions: ShippingOption[] = [
+  { type: "Standard Delivery", price: "60.00", estimatedDelivery: "4-6 days", enabled: true, freeShipping: false },
+  { type: "Express Delivery", price: "120.00", estimatedDelivery: "2-3 days", enabled: false, freeShipping: false },
+  { type: "Super Express Delivery", price: "200.00", estimatedDelivery: "1 day", enabled: false, freeShipping: false },
+];
+
+const optionsFromMethods = (methods: AdminShippingMethod[], saved: ShippingOption[] = []): ShippingOption[] => {
+  if (!methods.length) return saved.length ? saved : defaultShippingOptions;
+  return methods
+    .filter((method) => method.is_enabled)
+    .map((method, index) => {
+      const previous = saved.find((option) =>
+        option.methodId === method.id || option.type?.toLowerCase() === method.name.toLowerCase()
+      );
+      const price = previous?.price ?? method.delivery_charge ?? "0.00";
+      const isStandard = method.name.toLowerCase().includes("standard");
+      // A zero charge always means free (the backend and the customer site
+      // both treat price 0 as free), so keep the toggle in sync with the price.
+      const isFree = Number(price) === 0 || previous?.freeShipping === true;
+      return {
+        methodId: method.id,
+        type: method.name,
+        price: isFree ? "0.00" : String(price),
+        estimatedDelivery: previous?.estimatedDelivery || method.estimated_delivery_time,
+        description: previous?.description || method.description || "",
+        enabled: previous?.enabled ?? (isStandard || index === 0),
+        freeShipping: isFree,
+      };
+    });
+};
 
 // Define SectionCard outside component to prevent re-renders
 const SectionCard = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -57,6 +87,7 @@ export default function ProductForm() {
   // State for loading product data
   const [isLoadingProduct, setIsLoadingProduct] = useState(false);
   const [productData, setProductData] = useState<any>(null);
+  const [adminShippingMethods, setAdminShippingMethods] = useState<AdminShippingMethod[]>([]);
 
   const [title, setTitle] = useState("");
   const [sku, setSku] = useState("");
@@ -188,9 +219,7 @@ export default function ProductForm() {
   const [weight, setWeight] = useState("");
   const [weightUnit, setWeightUnit] = useState("kg");
   const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([
-    { type: "Standard", price: "4.99", estimatedDelivery: "5-7", enabled: true, freeShipping: false },
-    { type: "Express", price: "12.99", estimatedDelivery: "2-3", enabled: false, freeShipping: false },
-    { type: "Super Express", price: "24.99", estimatedDelivery: "1", enabled: false, freeShipping: false },
+    ...defaultShippingOptions,
   ]);
   const [description, setDescription] = useState("");
   const [shortDescription, setShortDescription] = useState("");
@@ -221,6 +250,28 @@ export default function ProductForm() {
   const [isFeatured, setIsFeatured] = useState(false);
   const [returnPolicy, setReturnPolicy] = useState("");
   const [warranty, setWarranty] = useState("");
+
+  useEffect(() => {
+    const fetchShippingMethods = async () => {
+      try {
+        const response = await api.get("/products/shipping-methods/");
+        const methods = Array.isArray(response.data?.results) ? response.data.results : response.data;
+        if (Array.isArray(methods)) {
+          setAdminShippingMethods(methods);
+          setShippingOptions((current) => optionsFromMethods(methods, current));
+        }
+      } catch (error) {
+        console.error("Failed to fetch shipping methods:", error);
+      }
+    };
+
+    fetchShippingMethods();
+  }, []);
+
+  useEffect(() => {
+    if (!productData?.variants?.shippingOptions || adminShippingMethods.length === 0) return;
+    setShippingOptions(optionsFromMethods(adminShippingMethods, productData.variants.shippingOptions));
+  }, [adminShippingMethods, productData]);
 
   const addKeyword = (e?: React.MouseEvent) => { 
     e?.preventDefault(); 
@@ -729,17 +780,32 @@ export default function ProductForm() {
                 <div key={i} className={`p-3 rounded-xl border transition-colors space-y-2 ${opt.enabled ? "border-primary/30 bg-primary/5" : "border-border/40 bg-muted/20 opacity-60"}`}>
                   <div className="flex items-center gap-3">
                     <Switch checked={opt.enabled} onCheckedChange={(v) => { const u = [...shippingOptions]; u[i] = { ...u[i], enabled: v }; setShippingOptions(u); }} />
-                    <span className="font-medium text-sm w-32">{opt.type}</span>
+                    <span className="font-medium text-sm w-40">{opt.type}</span>
                     <div className={`flex items-center gap-1 ${opt.freeShipping ? "opacity-40 pointer-events-none" : ""}`}>
-                      <span className="text-sm text-muted-foreground">$</span>
+                      <span className="text-sm text-muted-foreground">BDT</span>
                       <Input type="number" step="0.01" value={opt.freeShipping ? "0.00" : opt.price} onChange={(e) => { const u = [...shippingOptions]; u[i] = { ...u[i], price: e.target.value }; setShippingOptions(u); }} placeholder="0.00" className="rounded-lg w-24" />
                     </div>
-                    <Input value={opt.estimatedDelivery} onChange={(e) => { const u = [...shippingOptions]; u[i] = { ...u[i], estimatedDelivery: e.target.value }; setShippingOptions(u); }} placeholder="Days" className="rounded-lg w-28" />
+                    <Input value={opt.estimatedDelivery} onChange={(e) => { const u = [...shippingOptions]; u[i] = { ...u[i], estimatedDelivery: e.target.value }; setShippingOptions(u); }} placeholder="Days" className="rounded-lg w-32" />
                     <div className="flex items-center gap-1.5 ml-auto">
                       <Label className="text-xs text-muted-foreground">Free</Label>
-                      <Switch checked={opt.freeShipping} onCheckedChange={(v) => { const u = [...shippingOptions]; u[i] = { ...u[i], freeShipping: v }; setShippingOptions(u); }} />
+                      <Switch checked={opt.freeShipping} onCheckedChange={(v) => {
+                        const u = [...shippingOptions];
+                        // Free shipping means a zero charge — persist price 0 so
+                        // it survives a reload (the backend derives free-ness
+                        // from the price) and shows free to customers. When
+                        // un-freeing, restore the admin method's default charge.
+                        const method = adminShippingMethods.find((m) => m.id === u[i].methodId);
+                        const restore = method?.delivery_charge ?? "60.00";
+                        u[i] = {
+                          ...u[i],
+                          freeShipping: v,
+                          price: v ? "0.00" : (Number(u[i].price) === 0 ? String(restore) : u[i].price),
+                        };
+                        setShippingOptions(u);
+                      }} />
                     </div>
                   </div>
+                  {opt.description && <p className="pl-[52px] text-xs text-muted-foreground">{opt.description}</p>}
                 </div>
               ))}
             </div>
@@ -781,11 +847,27 @@ export default function ProductForm() {
         {/* RIGHT COLUMN */}
         <div className="space-y-6">
           <SectionCard title="Status">
-            <Select value={status} onValueChange={setStatus}>
+            {status === "Suspended" ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs leading-relaxed text-destructive">
+                <p className="font-semibold">Frozen by marketplace admin</p>
+                {productData?.moderation?.reason ? <p className="mt-1">Reason: {productData.moderation.reason}</p> : null}
+                <p className="mt-1">You can update the product details, but it stays unpublished until an admin approves it again.</p>
+              </div>
+            ) : null}
+            {productData?.status === "Rejected" && status === "Rejected" ? (
+              <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs leading-relaxed text-warning">
+                <p className="font-semibold">Rejected by marketplace admin</p>
+                {productData?.moderation?.reason ? <p className="mt-1">Reason: {productData.moderation.reason}</p> : null}
+                <p className="mt-1">Fix the issue, then set the status to Active to re-publish — no re-approval needed.</p>
+              </div>
+            ) : null}
+            <Select value={status} onValueChange={setStatus} disabled={status === "Suspended"}>
               <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="Draft">Draft</SelectItem><SelectItem value="Active">Active</SelectItem>
                 <SelectItem value="Out of Stock">Out of Stock</SelectItem><SelectItem value="Archived">Archived</SelectItem>
+                {status === "Suspended" ? <SelectItem value="Suspended" disabled>Suspended (Admin)</SelectItem> : null}
+                {status === "Rejected" ? <SelectItem value="Rejected" disabled>Rejected (Admin)</SelectItem> : null}
               </SelectContent>
             </Select>
             <div className="flex items-center justify-between">

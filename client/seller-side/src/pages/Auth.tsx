@@ -29,7 +29,6 @@ export default function Auth() {
     businessName: "",
     businessCategory: "",
     businessDescription: "",
-    additionalInfo: "",
   });
 
   const updateForm = (key: keyof typeof form, value: string) => {
@@ -70,7 +69,6 @@ export default function Auth() {
           business_name: form.businessName,
           business_category: form.businessCategory,
           business_description: form.businessDescription,
-          additional_info: form.additionalInfo,
         });
         toast.success("Seller request submitted. Please wait for admin approval.");
         setMode("login");
@@ -221,26 +219,13 @@ export default function Auth() {
 
                 <div className="space-y-2">
                   <Label htmlFor="businessDescription" className="text-sm font-medium">
-                    Business Description
+                    Business Description (Optional)
                   </Label>
                   <Textarea
                     id="businessDescription"
                     className="rounded-xl"
                     value={form.businessDescription}
                     onChange={(e) => updateForm("businessDescription", e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="additionalInfo" className="text-sm font-medium">
-                    Other Information (Optional)
-                  </Label>
-                  <Textarea
-                    id="additionalInfo"
-                    className="rounded-xl"
-                    value={form.additionalInfo}
-                    onChange={(e) => updateForm("additionalInfo", e.target.value)}
                   />
                 </div>
               </>

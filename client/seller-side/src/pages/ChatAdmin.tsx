@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
-import { MessageCircle, Send, Loader2, User, RefreshCw, CheckCheck, PhoneOff } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, KeyboardEvent, useMemo } from 'react';
+import { MessageCircle, Send, Loader2, User, RefreshCw, CheckCheck, PhoneOff, Search, UserPlus, Circle } from 'lucide-react';
 import api from '@/lib/api';
 import CustomerProfileModal from '@/components/CustomerProfileModal';
 
@@ -47,6 +47,8 @@ export default function ChatAdmin() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [profileCustomerId, setProfileCustomerId] = useState<number | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'closed'>('all');
   const lastIdRef = useRef<number | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
@@ -184,53 +186,104 @@ export default function ChatAdmin() {
     }
   };
 
+  const filteredSessions = useMemo(() => {
+    const q = sessionQuery.trim().toLowerCase();
+    return sessions.filter((s) => {
+      if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        s.customer_name?.toLowerCase().includes(q) ||
+        (s.last_message_preview || '').toLowerCase().includes(q)
+      );
+    });
+  }, [sessions, sessionQuery, statusFilter]);
+
+  const totalUnread = useMemo(() => sessions.reduce((sum, s) => sum + (s.unread_count || 0), 0), [sessions]);
+
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-background border border-border rounded-lg overflow-hidden">
+    <div className="flex h-[calc(100vh-6rem)] overflow-hidden rounded-2xl border border-border bg-card shadow-sm animate-fade-in">
       {/* Session list */}
-      <div className="w-56 border-r border-border flex flex-col flex-shrink-0">
-        <div className="p-3 border-b border-border flex items-center justify-between">
-          <h2 className="font-semibold text-sm">Live Chats</h2>
-          <button onClick={fetchSessions} className="text-muted-foreground hover:text-foreground transition-colors">
-            <RefreshCw className="w-4 h-4" />
-          </button>
+      <div className="flex w-72 flex-shrink-0 flex-col border-r border-border bg-muted/20">
+        <div className="border-b border-border p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <h2 className="section-title flex items-center gap-2">
+                Inbox
+                {totalUnread > 0 && (
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground">{totalUnread}</span>
+                )}
+              </h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{sessions.length} conversations</p>
+            </div>
+            <button onClick={fetchSessions} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-background hover:text-foreground" title="Refresh">
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={sessionQuery}
+              onChange={(e) => setSessionQuery(e.target.value)}
+              placeholder="Search chats..."
+              className="w-full rounded-lg border border-transparent bg-background/80 py-1.5 pl-8 pr-2 text-xs outline-none transition-all focus:border-primary/40 focus:bg-background"
+            />
+          </div>
+          <div className="mt-2 flex gap-1">
+            {(['all', 'active', 'closed'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setStatusFilter(f)}
+                className={`flex-1 rounded-md px-2 py-1 text-[11px] font-medium capitalize transition-colors ${statusFilter === f ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-background/60 text-muted-foreground hover:bg-background'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto p-2">
           {loadingSessions && (
-            <div className="flex justify-center py-8">
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           )}
-          {!loadingSessions && sessions.length === 0 && (
-            <div className="text-center text-muted-foreground text-sm py-8 px-4">
-              <MessageCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p>No active chats</p>
+          {!loadingSessions && filteredSessions.length === 0 && (
+            <div className="px-4 py-10 text-center text-sm text-muted-foreground">
+              <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-muted">
+                <MessageCircle className="h-5 w-5 opacity-40" />
+              </div>
+              <p className="font-medium">No conversations</p>
             </div>
           )}
-          {sessions.map(s => (
+          {filteredSessions.map((s) => (
             <button
               key={s.id}
               onClick={() => openSession(s)}
-              className={`w-full text-left px-3 py-2.5 border-b border-border hover:bg-muted/50 transition-colors ${activeSession?.id === s.id ? 'bg-muted' : ''}`}
+              className={`mb-1 flex w-full items-start gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-all ${activeSession?.id === s.id ? 'bg-primary/10 ring-1 ring-primary/20' : 'hover:bg-background'}`}
             >
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <User className="w-3.5 h-3.5 text-primary" />
+              <div className="relative flex-shrink-0">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/60 text-xs font-bold text-primary-foreground shadow-sm">
+                  {(s.customer_name || 'U').slice(0, 2).toUpperCase()}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-xs font-medium truncate">{s.customer_name}</span>
-                    {s.unread_count > 0 && (
-                      <span className="bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">
-                        {s.unread_count}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground border border-border'}`}>
-                      {s.status}
+                {s.status === 'active' && (
+                  <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3 items-center justify-center rounded-full border-2 border-background bg-success">
+                    <Circle className="h-1 w-1 fill-success text-success" />
+                  </span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-1">
+                  <span className={`truncate text-sm ${s.unread_count > 0 ? 'font-bold' : 'font-semibold'}`}>{s.customer_name}</span>
+                  <span className="flex-shrink-0 text-[10px] text-muted-foreground">{formatTime(s.last_message_at)}</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <p className={`flex-1 truncate text-xs ${s.unread_count > 0 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+                    {s.last_message_preview || 'No messages yet'}
+                  </p>
+                  {s.unread_count > 0 && (
+                    <span className="flex-shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">
+                      {s.unread_count}
                     </span>
-                    <span className="text-[10px] text-muted-foreground flex-shrink-0 ml-auto">{formatTime(s.last_message_at)}</span>
-                  </div>
+                  )}
                 </div>
               </div>
             </button>
@@ -239,57 +292,66 @@ export default function ChatAdmin() {
       </div>
 
       {/* Chat window */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col bg-gradient-to-b from-background to-muted/10">
         {!activeSession ? (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
+          <div className="flex flex-1 items-center justify-center text-muted-foreground">
             <div className="text-center">
-              <MessageCircle className="w-12 h-12 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">Select a conversation to start</p>
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 ring-1 ring-primary/20">
+                <MessageCircle className="h-7 w-7 text-primary" />
+              </div>
+              <p className="text-base font-semibold text-foreground">Select a conversation</p>
+              <p className="mt-1 text-sm">Pick a chat from the inbox to start replying</p>
             </div>
           </div>
         ) : (
           <>
             {/* Chat header */}
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User className="w-4 h-4 text-primary" />
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-border bg-background/70 px-5 py-3 backdrop-blur">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/60 text-sm font-bold text-primary-foreground shadow-sm">
+                    {(activeSession.customer_name || 'U').slice(0, 2).toUpperCase()}
+                  </div>
+                  {activeSession.status === 'active' && (
+                    <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-background bg-success" />
+                  )}
                 </div>
                 <div>
                   <button
-                    className="text-sm font-semibold hover:underline text-left"
+                    className="text-left text-sm font-semibold tracking-tight transition-colors hover:text-primary"
                     onClick={() => activeSession.user && setProfileCustomerId(activeSession.user)}
                     title={activeSession.user ? "View customer profile" : undefined}
                   >
                     {activeSession.customer_name}
                   </button>
-                  <p className="text-xs text-muted-foreground">
-                    {activeSession.assigned_admin_name ? `Assigned to: ${activeSession.assigned_admin_name}` : 'Unassigned'}
+                  <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${activeSession.status === 'active' ? 'bg-success' : 'bg-muted-foreground/40'}`} />
+                    {activeSession.assigned_admin_name ? `Assigned to ${activeSession.assigned_admin_name}` : 'Unassigned'}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`text-xs px-2 py-1 rounded-full ${activeSession.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground'}`}>
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${activeSession.status === 'active' ? 'bg-success/10 text-success ring-1 ring-success/20' : 'bg-muted text-muted-foreground'}`}>
                   {activeSession.status}
                 </span>
                 {!activeSession.assigned_admin_name && (
-                  <button onClick={assignSelf} className="text-xs bg-primary text-primary-foreground px-3 py-1 rounded-full hover:opacity-90 transition-opacity">
-                    Assign to me
+                  <button onClick={assignSelf} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm transition-all hover:shadow-md">
+                    <UserPlus className="h-3 w-3" /> Assign to me
                   </button>
                 )}
                 {activeSession.status === 'active' && (
                   confirmEnd ? (
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/5 px-2 py-0.5">
                       <span className="text-xs text-muted-foreground">End chat?</span>
                       <button
                         onClick={endChat}
-                        className="text-xs bg-red-500 text-white px-2.5 py-1 rounded-full hover:bg-red-600 transition-colors"
+                        className="rounded-full bg-destructive px-2.5 py-1 text-xs font-medium text-destructive-foreground transition-colors hover:opacity-90"
                       >
                         Yes
                       </button>
                       <button
                         onClick={() => setConfirmEnd(false)}
-                        className="text-xs border px-2.5 py-1 rounded-full hover:bg-muted transition-colors"
+                        className="rounded-full border px-2.5 py-1 text-xs transition-colors hover:bg-muted"
                       >
                         No
                       </button>
@@ -297,7 +359,7 @@ export default function ChatAdmin() {
                   ) : (
                     <button
                       onClick={() => setConfirmEnd(true)}
-                      className="flex items-center gap-1 text-xs text-destructive border border-destructive/30 px-2.5 py-1 rounded-full hover:bg-destructive/10 transition-colors"
+                      className="flex items-center gap-1.5 rounded-full border border-destructive/30 px-2.5 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10"
                       title="End chat"
                     >
                       <PhoneOff className="w-3.5 h-3.5" /> End Chat
@@ -308,16 +370,16 @@ export default function ChatAdmin() {
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 space-y-3 overflow-y-auto p-6">
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[70%] rounded-2xl px-3 py-2 ${
+                  <div className={`max-w-[68%] rounded-2xl px-4 py-2.5 shadow-sm ${
                     msg.sender_type === 'admin'
-                      ? 'bg-primary text-primary-foreground rounded-br-sm'
-                      : 'bg-muted text-foreground rounded-bl-sm'
+                      ? 'bg-primary text-primary-foreground rounded-br-md'
+                      : 'border border-border bg-card text-foreground rounded-bl-md'
                   }`}>
-                    <p className="text-sm break-words">{msg.content}</p>
-                    <div className={`flex items-center gap-1 mt-0.5 ${msg.sender_type === 'admin' ? 'justify-end' : ''}`}>
+                    <p className="break-words text-sm leading-relaxed">{msg.content}</p>
+                    <div className={`mt-1 flex items-center gap-1 ${msg.sender_type === 'admin' ? 'justify-end' : ''}`}>
                       <span className={`text-[10px] ${msg.sender_type === 'admin' ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                         {formatFull(msg.created_at)}
                       </span>
@@ -330,7 +392,7 @@ export default function ChatAdmin() {
               ))}
               {activeSession.status === 'closed' && (
                 <div className="flex justify-center pt-2">
-                  <div className="flex items-center gap-2 bg-muted border border-border rounded-full px-4 py-1.5 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 rounded-full border border-border bg-background px-4 py-1.5 text-xs text-muted-foreground shadow-sm">
                     <PhoneOff className="w-3 h-3 shrink-0" />
                     This conversation has ended. No further messages can be sent.
                   </div>
@@ -340,26 +402,26 @@ export default function ChatAdmin() {
             </div>
 
             {/* Input */}
-            <div className="border-t border-border p-3 flex-shrink-0">
+            <div className="flex-shrink-0 border-t border-border bg-background/70 p-4 backdrop-blur">
               {activeSession.status === 'closed' ? (
-                <div className="flex items-center justify-center gap-2 py-1.5 text-sm text-muted-foreground select-none">
+                <div className="flex select-none items-center justify-center gap-2 py-1.5 text-sm text-muted-foreground">
                   <PhoneOff className="w-4 h-4" />
                   Chat ended — messaging is disabled.
                 </div>
               ) : (
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-sm focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
                   <textarea
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={handleKey}
-                    placeholder="Type a reply..."
+                    placeholder="Type your reply... (Shift+Enter for new line)"
                     rows={1}
-                    className="flex-1 resize-none bg-muted rounded-xl px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary max-h-24 overflow-y-auto"
+                    className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none"
                   />
                   <button
                     onClick={sendMessage}
                     disabled={!input.trim() || isSending}
-                    className="bg-primary text-primary-foreground rounded-xl p-2 hover:opacity-90 disabled:opacity-40 transition-opacity flex-shrink-0"
+                    className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm transition-all hover:shadow-md disabled:opacity-40 disabled:shadow-none"
                   >
                     {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </button>

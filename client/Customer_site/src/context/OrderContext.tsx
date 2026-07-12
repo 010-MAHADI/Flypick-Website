@@ -11,6 +11,8 @@ export interface OrderItem {
   color?: string;
   size?: string;
   shipping_type?: string;
+  shipping_charge?: string;
+  shipping_estimated_delivery?: string;
   quantity: number;
   price: string;
   total_price: string;
@@ -34,6 +36,8 @@ export interface Order {
   payment_status: string;
   subtotal: string;
   shipping_cost: string;
+  shipping_method?: string;
+  shipping_estimated_delivery?: string;
   discount: string;
   coupon_code: string | null;
   store_credit_used?: string;
@@ -64,7 +68,7 @@ interface OrderContextType {
   loading: boolean;
   fetchOrders: () => Promise<void>;
   getOrder: (orderId: string) => Order | undefined;
-  cancelOrder: (orderId: string, reason?: string) => Promise<boolean>;
+  cancelOrder: (orderId: string, reason?: string, refundMethod?: 'store_credit' | 'original') => Promise<boolean>;
 }
 
 const OrderContext = createContext<OrderContextType | undefined>(undefined);
@@ -100,15 +104,22 @@ export const OrderProvider = ({ children }: { children: ReactNode }) => {
     return orders.find(order => order.order_id === orderId);
   };
 
-  const cancelOrder = async (orderId: string, reason?: string): Promise<boolean> => {
+  const cancelOrder = async (
+    orderId: string,
+    reason?: string,
+    refundMethod: 'store_credit' | 'original' = 'original',
+  ): Promise<boolean> => {
     try {
       const order = orders.find(o => o.order_id === orderId);
       if (!order) {
         throw new Error('Order not found');
       }
 
-      // Call the cancel API endpoint (reason is stored + audited server-side)
-      await api.patch(`/orders/orders/${order.id}/cancel/`, { reason: reason || '' });
+      // Call the cancel API endpoint (reason + refund method audited server-side)
+      await api.patch(`/orders/orders/${order.id}/cancel/`, {
+        reason: reason || '',
+        refund_method: refundMethod,
+      });
 
       // Update the local state
       setOrders(prevOrders =>

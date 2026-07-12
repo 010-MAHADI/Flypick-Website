@@ -9,6 +9,8 @@ export interface OrderItemApi {
     color?: string | null;
     size?: string | null;
     shipping_type?: string | null;
+    shipping_charge?: number | string | null;
+    shipping_estimated_delivery?: string | null;
     quantity: number;
     price: number | string;
     product_details?: {
@@ -37,6 +39,8 @@ export interface Order {
     payment_status: string;
     subtotal?: number;
     shipping_cost?: number;
+    shipping_method?: string;
+    shipping_estimated_delivery?: string;
     discount?: number;
     total: number;
     paymentMethod: string;
@@ -109,6 +113,8 @@ export const useOrders = (shopId?: string | number) => {
                         payment_status: order.payment_status || "pending",
                         subtotal: parseFloat(order.subtotal) || 0,
                         shipping_cost: parseFloat(order.shipping_cost) || 0,
+                        shipping_method: order.shipping_method || "",
+                        shipping_estimated_delivery: order.shipping_estimated_delivery || "",
                         discount: parseFloat(order.discount) || 0,
                         total: parseFloat(order.total_amount) || 0,
                         paymentMethod: order.payment_method || "Unknown",
@@ -192,8 +198,39 @@ export interface RefundApi {
     method: string;
     status: string;
     reason: string;
+    origin?: string;
+    payment_method?: string;
+    settlement_owner?: 'none' | 'seller' | 'admin';
+    settlement_transaction_id?: string;
+    settlement_proof_url?: string | null;
+    settled_by_email?: string | null;
+    settled_at?: string | null;
     created_at: string;
 }
+
+/** Complete an approved original-method refund with a transaction id + proof. */
+export const useSettleRefund = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ refundId, transactionId, note, proof }: {
+            refundId: number; transactionId: string; note?: string; proof?: File | null;
+        }) => {
+            const form = new FormData();
+            form.append('transaction_id', transactionId);
+            if (note) form.append('note', note);
+            if (proof) form.append('proof', proof);
+            const response = await api.post(`/orders/refunds/${refundId}/settle/`, form, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            return response.data;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['seller_refunds'] });
+            queryClient.invalidateQueries({ queryKey: ['seller_returns'] });
+            queryClient.invalidateQueries({ queryKey: ['admin_orders'] });
+        },
+    });
+};
 
 /** Refund cases for the seller's/admin's orders. */
 export const useRefunds = () => {

@@ -24,7 +24,7 @@ import {
 import { ReceiptDialog } from "@/components/ReceiptDialog";
 import type { ReceiptOrder, SenderDetails } from "@/lib/receiptUtils";
 import { toast } from "sonner";
-import { useOrders, useUpdateOrderStatus, useMarkOrderPaid, useRefunds, useProcessRefund } from "@/hooks/useOrders";
+import { useOrders, useUpdateOrderStatus, useRefunds, useProcessRefund, useSettleRefund } from "@/hooks/useOrders";
 import { useAuth } from "@/context/AuthContext";
 import { useShop } from "@/context/ShopContext";
 import { useReturns, useUpdateReturnStatus } from "@/hooks/useReturns";
@@ -36,6 +36,8 @@ interface OrderItem {
   price: number;
   imageUrl?: string;
   shippingType?: string;
+  shippingCharge?: number;
+  shippingEstimatedDelivery?: string;
   color?: string;
   size?: string;
 }
@@ -75,6 +77,8 @@ interface Order {
   amount: number;
   subtotal?: number;
   shippingCost?: number;
+  shippingMethod?: string;
+  shippingEstimatedDelivery?: string;
   discount?: number;
   status: "pending" | "processing" | "shipped" | "delivered" | "cancelled";
   payment: "Paid" | "Unpaid" | "Refunded" | "Partially Refunded";
@@ -134,9 +138,10 @@ const paymentClass: Record<string, string> = {
 
 const ITEMS_PER_PAGE = 6;
 
-type TabKey = "all" | "unpaid" | "to_ship" | "shipping" | "delivered" | "cancelled" | "returns";
+type TabKey = "pending" | "all" | "unpaid" | "to_ship" | "shipping" | "delivered" | "cancelled" | "returns";
 
 const tabs: { key: TabKey; label: string }[] = [
+  { key: "pending", label: "Pending Orders" },
   { key: "all", label: "All" },
   { key: "unpaid", label: "Unpaid" },
   { key: "to_ship", label: "To Ship" },
@@ -148,6 +153,7 @@ const tabs: { key: TabKey; label: string }[] = [
 
 function getTabFilter(tab: TabKey, order: Order, returnRequests?: any[]): boolean {
   switch (tab) {
+    case "pending": return order.status === "pending";
     case "all": return true;
     case "unpaid": return order.payment === "Unpaid";
     case "to_ship": return order.status === "pending" || order.status === "processing";
@@ -284,13 +290,6 @@ interface StatusDialogState {
   targetStatus: Order["status"];
   message: string;
   trackingNumber: string;
-}
-
-interface PaymentDialogState {
-  open: boolean;
-  orderId: string;
-  paymentMethod: string;
-  description: string;
 }
 
 interface RefundDialogState {
@@ -841,8 +840,11 @@ export default function Orders() {
   const selectedShopId = currentShop?.id ? Number(currentShop.id) : undefined;
   const { data: fetchedOrders, isLoading } = useOrders(selectedShopId);
   const updateOrderStatus = useUpdateOrderStatus();
-  const markOrderPaid = useMarkOrderPaid();
   const processRefund = useProcessRefund();
+  const settleRefund = useSettleRefund();
+  const [settleState, setSettleState] = useState<{ open: boolean; refundId: number | null; transactionId: string; note: string; proof: File | null }>({
+    open: false, refundId: null, transactionId: "", note: "", proof: null,
+  });
   const { data: refundCases = [] } = useRefunds();
   const { data: returnRequests } = useReturns(selectedShopId);
   const updateReturnStatus = useUpdateReturnStatus();
@@ -896,6 +898,8 @@ export default function Orders() {
               price: Number(item.price) || 0,
               imageUrl: item.product_image_url || undefined,
               shippingType,
+              shippingCharge: Number(item.shipping_charge) || 0,
+              shippingEstimatedDelivery: item.shipping_estimated_delivery || undefined,
               color: item.color || undefined,
               size: item.size || undefined,
             };
@@ -903,6 +907,8 @@ export default function Orders() {
           amount: o.total || 0,
           subtotal: o.subtotal || 0,
           shippingCost: o.shipping_cost || 0,
+          shippingMethod: o.shipping_method || "",
+          shippingEstimatedDelivery: o.shipping_estimated_delivery || "",
           discount: o.discount || 0,
           status: o.status,
           payment: o.payment_status === "paid"
@@ -935,7 +941,8 @@ export default function Orders() {
   }, [fetchedOrders]);
 
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  // Pending Orders is the default tab (spec: seller works pending orders first).
+  const [statusFilter, setStatusFilter] = useState("pending");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<ReceiptOrder | null>(null);
@@ -948,9 +955,6 @@ export default function Orders() {
   // Dialog states
   const [statusDialog, setStatusDialog] = useState<StatusDialogState>({
     open: false, orderId: "", targetStatus: "processing", message: "", trackingNumber: "",
-  });
-  const [paymentDialog, setPaymentDialog] = useState<PaymentDialogState>({
-    open: false, orderId: "", paymentMethod: "", description: "",
   });
   const [refundDialog, setRefundDialog] = useState<RefundDialogState>({
     open: false, orderId: "", type: "full", reason: "", description: "", refundAmount: "", selectedItems: {}, method: "original",
@@ -991,7 +995,7 @@ export default function Orders() {
   }, [orders, isLoading]);
 
   const tabCounts = useMemo(() => {
-    const counts: Record<TabKey, number> = { all: 0, unpaid: 0, to_ship: 0, shipping: 0, delivered: 0, cancelled: 0, returns: 0 };
+    const counts: Record<TabKey, number> = { pending: 0, all: 0, unpaid: 0, to_ship: 0, shipping: 0, delivered: 0, cancelled: 0, returns: 0 };
     orders.forEach((o) => {
       counts.all++;
       if (o.payment === "Unpaid") counts.unpaid++;
@@ -1121,55 +1125,6 @@ export default function Orders() {
     setStatusDialog({ open: false, orderId: "", targetStatus: "processing", message: "", trackingNumber: "" });
   };
 
-  // Payment confirmation for unpaid orders
-  const openPaymentDialog = (orderId: string) => {
-    setPaymentDialog({ open: true, orderId, paymentMethod: "", description: "" });
-  };
-
-  const confirmPayment = async () => {
-    const { orderId, paymentMethod, description } = paymentDialog;
-    if (!paymentMethod) {
-      toast.error("Please select a payment method");
-      return;
-    }
-    const order = orders.find((o) => o.id === orderId);
-    if (!order) return;
-
-    // Persist to the backend so the paid status survives a refresh
-    try {
-      await markOrderPaid.mutateAsync({
-        orderApiId: order.apiId,
-        paymentMethod,
-        note: description.trim(),
-      });
-    } catch (error: any) {
-      toast.error(error?.response?.data?.detail || "Failed to mark order as paid");
-      return;
-    }
-
-    const update: TrackingUpdate = {
-      status: "Note",
-      message: `Payment received via ${paymentMethod}${description ? ` — ${description}` : ""}`,
-      date: todayStr,
-      time: timeStr,
-    };
-    setOrders((prev) => prev.map((o) => o.id === orderId ? {
-      ...o,
-      payment: "Paid" as const,
-      paymentMethod,
-      trackingUpdates: [...o.trackingUpdates, update],
-    } : o));
-    if (selectedOrder?.id === orderId) {
-      setSelectedOrder((prev) => prev ? {
-        ...prev,
-        payment: "Paid" as const,
-        paymentMethod,
-        trackingUpdates: [...prev.trackingUpdates, update],
-      } : null);
-    }
-    toast.success(`Order ${orderId} marked as Paid`);
-    setPaymentDialog({ open: false, orderId: "", paymentMethod: "", description: "" });
-  };
 
   // Refund/Return system
   const openRefundDialog = (orderId: string) => {
@@ -1531,11 +1486,6 @@ export default function Orders() {
           </div>
           <div className="flex gap-2 flex-wrap">
             {renderDocumentMenu(selectedOrder)}
-            {selectedOrder.payment === "Unpaid" && (
-              <Button variant="outline" size="sm" className="rounded-lg" onClick={() => openPaymentDialog(selectedOrder.id)}>
-                <Banknote className="h-4 w-4 mr-1.5" /> Mark Paid
-              </Button>
-            )}
             {selectedOrder.status !== "delivered" && selectedOrder.status !== "cancelled" && (
               <>
                 {selectedOrder.status === "pending" && (
@@ -1607,6 +1557,12 @@ export default function Orders() {
               <div className="space-y-2.5 text-sm max-w-xs ml-auto">
                 <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span className="font-medium">${selectedOrderPricing.subtotal.toFixed(2)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="font-medium">${selectedOrderPricing.shipping.toFixed(2)}</span></div>
+                {selectedOrder.shippingMethod && (
+                  <div className="rounded-lg bg-muted/40 p-2 text-xs text-muted-foreground">
+                    <p className="font-semibold text-foreground">{selectedOrder.shippingMethod}</p>
+                    {selectedOrder.shippingEstimatedDelivery && <p>Estimated delivery: {selectedOrder.shippingEstimatedDelivery}</p>}
+                  </div>
+                )}
                 <Separator />
                 <div className="flex justify-between font-bold text-base pt-1"><span>Total</span><span className="text-primary">${selectedOrder.amount.toFixed(2)}</span></div>
               </div>
@@ -1641,6 +1597,15 @@ export default function Orders() {
                   <p className="text-muted-foreground">{selectedOrder.address.city}, {selectedOrder.address.state} {selectedOrder.address.zip}</p>
                   <p className="text-muted-foreground">{selectedOrder.address.country}</p>
                 </div>
+                {selectedOrder.shippingMethod && (
+                  <div className="rounded-lg border border-border/40 bg-muted/30 p-3 text-sm">
+                    <p className="font-medium">{selectedOrder.shippingMethod}</p>
+                    <p className="text-muted-foreground">
+                      Charge: ${Number(selectedOrder.shippingCost || 0).toFixed(2)}
+                      {selectedOrder.shippingEstimatedDelivery ? ` · ${selectedOrder.shippingEstimatedDelivery}` : ""}
+                    </p>
+                  </div>
+                )}
                 {selectedOrder.trackingNumber && (
                   <div className="mt-2">
                     <p className="text-xs text-muted-foreground mb-1.5">Tracking Number</p>
@@ -1691,8 +1656,26 @@ export default function Orders() {
                         </div>
                         <div className="text-xs space-y-1">
                           {refund.reason && <p><span className="text-muted-foreground">Reason:</span> <span className="font-medium">{refund.reason}</span></p>}
+                          {refund.settlement_transaction_id && (
+                            <p><span className="text-muted-foreground">Txn ID:</span> <span className="font-mono">{refund.settlement_transaction_id}</span></p>
+                          )}
                           <p className="text-muted-foreground/60">Filed on {new Date(refund.created_at).toLocaleDateString()}</p>
                         </div>
+                        {/* COD original refunds are completed by the seller */}
+                        {refund.settlement_owner === "seller" && refund.status === "approved" && (
+                          <Button
+                            size="sm"
+                            className="rounded-lg text-xs h-7"
+                            onClick={() => setSettleState({ open: true, refundId: refund.id, transactionId: "", note: "", proof: null })}
+                          >
+                            <RefreshCw className="h-3 w-3 mr-1" /> Complete Refund
+                          </Button>
+                        )}
+                        {refund.settlement_owner === "admin" && refund.status === "approved" && (
+                          <p className="text-[11px] text-muted-foreground italic">
+                            Online refund — forwarded to admin for processing.
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1787,28 +1770,10 @@ export default function Orders() {
                         </div>
                       )}
                       {returnReq.status === "approved" && (
-                        <Button 
-                          size="sm" 
-                          className="rounded-lg text-xs h-7" 
-                          onClick={async () => {
-                            const refundAmount = prompt('Enter refund amount:', returnReq.refund_amount || '0');
-                            if (refundAmount) {
-                              try {
-                                await updateReturnStatus.mutateAsync({
-                                  returnId: returnReq.id,
-                                  status: 'refunded',
-                                  refund_amount: refundAmount,
-                                  admin_note: 'Refund processed by seller'
-                                });
-                                toast.success('Return marked as refunded');
-                              } catch (error) {
-                                toast.error('Failed to process refund');
-                              }
-                            }
-                          }}
-                        >
-                          <RefreshCw className="h-3 w-3 mr-1" /> Process Refund
-                        </Button>
+                        <p className="text-[11px] text-muted-foreground italic pt-1">
+                          Approved. The refund is tracked in the Refunds section above —
+                          COD refunds are completed there; online refunds are processed by admin.
+                        </p>
                       )}
                     </div>
                   ))}
@@ -1916,11 +1881,10 @@ export default function Orders() {
                 <div className="flex justify-between items-center"><span className="text-muted-foreground">Status</span><span className={paymentClass[selectedOrder.payment]}>{selectedOrder.payment}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-bold">${selectedOrder.amount.toFixed(2)}</span></div>
               </div>
-              {selectedOrder.payment === "Unpaid" && (
-                <Button size="sm" variant="outline" className="w-full rounded-lg gap-2 mt-2" onClick={() => openPaymentDialog(selectedOrder.id)}>
-                  <Banknote className="h-3.5 w-3.5" /> Mark as Paid
-                </Button>
-              )}
+              <p className="text-[11px] text-muted-foreground">
+                Payment is set by the customer at checkout and confirmed automatically.
+                Only an administrator can adjust payment details.
+              </p>
             </div>
           </div>
         </div>
@@ -1981,47 +1945,6 @@ export default function Orders() {
           </DialogContent>
         </Dialog>
 
-        {/* Payment Confirmation Dialog */}
-        <Dialog open={paymentDialog.open} onOpenChange={(open) => !open && setPaymentDialog(s => ({ ...s, open: false }))}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Banknote className="h-5 w-5 text-primary" />
-                Confirm Payment
-              </DialogTitle>
-              <DialogDescription>Mark this order as paid. Select the payment method used.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <div className="space-y-1.5">
-                <Label className="text-sm">Payment Method <span className="text-destructive">*</span></Label>
-                <Select value={paymentDialog.paymentMethod} onValueChange={(v) => setPaymentDialog(s => ({ ...s, paymentMethod: v }))}>
-                  <SelectTrigger className="rounded-lg">
-                    <SelectValue placeholder="Select payment method..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_METHODS.map(m => (
-                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm">Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                <Textarea
-                  placeholder="e.g. Payment received via bank transfer, reference #12345..."
-                  value={paymentDialog.description}
-                  onChange={(e) => setPaymentDialog(s => ({ ...s, description: e.target.value }))}
-                  className="rounded-lg text-sm min-h-[80px] resize-none"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" className="rounded-lg" onClick={() => setPaymentDialog(s => ({ ...s, open: false }))}>Cancel</Button>
-              <Button className="rounded-lg" onClick={confirmPayment} disabled={!paymentDialog.paymentMethod}>Confirm Payment</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
         <ReceiptDialog
           open={receiptOpen}
           onClose={() => setReceiptOpen(false)}
@@ -2031,6 +1954,68 @@ export default function Orders() {
           defaultSender={receiptSender}
           defaultSenderFields={receiptSenderFields}
         />
+
+        {/* Complete COD refund dialog (seller settlement) */}
+        <Dialog open={settleState.open} onOpenChange={(open) => !open && setSettleState(s => ({ ...s, open: false }))}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <RefreshCw className="h-5 w-5 text-primary" /> Complete Refund
+              </DialogTitle>
+              <DialogDescription>
+                You paid the customer back directly (COD). Record the transaction reference
+                to complete the refund. A proof image is optional.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <Label className="text-sm">Transaction ID <span className="text-destructive">*</span></Label>
+                <Input
+                  value={settleState.transactionId}
+                  onChange={(e) => setSettleState(s => ({ ...s, transactionId: e.target.value }))}
+                  placeholder="e.g. bKash TrxID / bank reference"
+                  className="rounded-lg"
+                />
+              </div>
+              <div>
+                <Label className="text-sm">Payment Proof <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input type="file" accept="image/*"
+                  onChange={(e) => setSettleState(s => ({ ...s, proof: e.target.files?.[0] ?? null }))}
+                  className="rounded-lg" />
+              </div>
+              <div>
+                <Label className="text-sm">Note <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Textarea value={settleState.note}
+                  onChange={(e) => setSettleState(s => ({ ...s, note: e.target.value }))}
+                  className="rounded-lg text-sm min-h-[70px] resize-none" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" className="rounded-lg" onClick={() => setSettleState(s => ({ ...s, open: false }))}>Cancel</Button>
+              <Button
+                className="rounded-lg"
+                disabled={!settleState.transactionId.trim() || settleRefund.isPending}
+                onClick={async () => {
+                  if (settleState.refundId == null) return;
+                  try {
+                    await settleRefund.mutateAsync({
+                      refundId: settleState.refundId,
+                      transactionId: settleState.transactionId.trim(),
+                      note: settleState.note.trim(),
+                      proof: settleState.proof,
+                    });
+                    toast.success("Refund completed");
+                    setSettleState(s => ({ ...s, open: false }));
+                  } catch (error: any) {
+                    toast.error(error?.response?.data?.detail || "Failed to complete refund");
+                  }
+                }}
+              >
+                {settleRefund.isPending ? "Saving..." : "Complete Refund"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Return / Refund Dialog */}
         <Dialog open={refundDialog.open} onOpenChange={(open) => !open && setRefundDialog(s => ({ ...s, open: false }))}>
@@ -2354,12 +2339,7 @@ export default function Orders() {
               </div>
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 {renderDocumentMenu(order, true)}
-                {order.payment === "Unpaid" && (
-                  <Button size="sm" variant="outline" className="rounded-lg text-xs h-8" onClick={() => openPaymentDialog(order.id)}>
-                    <Banknote className="h-3.5 w-3.5 mr-1" /> Pay
-                  </Button>
-                )}
-                {order.status === "pending" && order.payment !== "Unpaid" && (
+                {order.status === "pending" && (
                   <Button size="sm" variant="outline" className="rounded-lg text-xs h-8" onClick={() => openStatusDialog(order.id, "processing")}>
                     Process
                   </Button>
@@ -2383,9 +2363,6 @@ export default function Orders() {
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => setSelectedOrder(order)}><Eye className="h-4 w-4 mr-2" /> View Details</DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    {order.payment === "Unpaid" && (
-                      <DropdownMenuItem onClick={() => openPaymentDialog(order.id)}><Banknote className="h-4 w-4 mr-2" /> Mark Paid</DropdownMenuItem>
-                    )}
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "processing")}><Clock className="h-4 w-4 mr-2" /> Mark Processing</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "shipped")}><Truck className="h-4 w-4 mr-2" /> Mark Shipped</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => openStatusDialog(order.id, "delivered")}><CheckCircle className="h-4 w-4 mr-2" /> Mark Delivered</DropdownMenuItem>

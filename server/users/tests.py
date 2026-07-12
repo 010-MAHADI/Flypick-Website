@@ -243,3 +243,89 @@ class CustomerRegistrationNameTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["customer_profile"]["first_name"], "Rina")
         self.assertEqual(response.data["customer_profile"]["last_name"], "Akter")
+
+
+class DashboardStatsTests(APITestCase):
+    """The dashboard numbers must follow the business rules exactly."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='dashadmin', email='dashadmin@t.com', password='x', role='Admin')
+        self.seller = User.objects.create_user(
+            username='dashseller', email='dashseller@t.com', password='x', role='Seller')
+        self.customer = User.objects.create_user(
+            username='dashcust', email='dashcust@t.com', password='x', role='Customer')
+        self.shop = Shop.objects.create(seller=self.seller, name='Dash Shop', category='Tech')
+        self.product = Product.objects.create(
+            shop=self.shop, title='Dash Widget', price=Decimal('500'),
+            originalPrice=Decimal('500'), actualCost=Decimal('300'), stock=100)
+
+    def _order(self, status='delivered', payment_status='paid', qty=1,
+               price=Decimal('500'), shipping=Decimal('50')):
+        import uuid
+        o = Order.objects.create(
+            customer=self.customer, order_id=f'DSH{uuid.uuid4().hex[:8].upper()}',
+            payment_method='cod', payment_status=payment_status,
+            subtotal=price * qty, shipping_cost=shipping,
+            total_amount=price * qty + shipping, status=status)
+        OrderItem.objects.create(
+            order=o, product=self.product, product_title=self.product.title,
+            quantity=qty, price=price, shipping_charge=shipping)
+        return o
+
+    def _stats(self, user, range_key='all'):
+        self.client.force_authenticate(user)
+        resp = self.client.get('/api/users/dashboard/stats/', {'range': range_key})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return resp.data['stats']
+
+    def test_cancelled_refunded_returned_excluded_from_sales(self):
+        self._order(status='delivered')          # counts: 500
+        self._order(status='cancelled')           # excluded
+        self._order(status='returned')            # excluded
+        self._order(status='refunded')            # excluded
+        self._order(status='delivered', payment_status='refunded')  # excluded (paid refunded)
+        stats = self._stats(self.admin)
+        # Only the one valid delivered order counts (500 goods).
+        self.assertEqual(stats['totalSales'], 500.0)
+        self.assertEqual(stats['cancelledOrders'], 1)
+        self.assertEqual(stats['returnedOrders'], 1)
+        self.assertEqual(stats['refundedOrders'], 2)  # status refunded + payment refunded
+        self.assertEqual(stats['deliveredOrders'], 1)
+
+    def test_net_profit_is_margin_on_completed_only(self):
+        # Completed: price 500, cost 300, shipping 50 -> profit = 500 - 300 = 200.
+        self._order(status='delivered', price=Decimal('500'), shipping=Decimal('50'))
+        # A pending order must NOT contribute to profit.
+        self._order(status='pending', price=Decimal('500'), shipping=Decimal('50'))
+        stats = self._stats(self.seller)
+        self.assertEqual(stats['productCost'], 300.0)
+        self.assertEqual(stats['deliveryCost'], 50.0)
+        # Net profit = completed sales (550) - product cost (300) - delivery (50) = 200.
+        self.assertEqual(stats['netProfit'], 200.0)
+        # Total sales counts both valid orders (pending is valid, delivered is valid): 1000 goods.
+        self.assertEqual(stats['totalSales'], 1000.0)
+
+    def test_cancel_immediately_drops_sales(self):
+        o = self._order(status='delivered', price=Decimal('1000'), shipping=Decimal('0'))
+        self.assertEqual(self._stats(self.admin)['totalSales'], 1000.0)
+        o.status = 'cancelled'
+        o.save(update_fields=['status'])
+        self.assertEqual(self._stats(self.admin)['totalSales'], 0.0)
+
+    def test_status_counts(self):
+        self._order(status='pending')
+        self._order(status='processing')
+        self._order(status='shipped')
+        self._order(status='delivered')
+        stats = self._stats(self.seller)
+        self.assertEqual(stats['pendingOrders'], 1)
+        self.assertEqual(stats['processingOrders'], 1)
+        self.assertEqual(stats['shippedOrders'], 1)
+        self.assertEqual(stats['deliveredOrders'], 1)
+        self.assertEqual(stats['totalOrders'], 4)
+
+    def test_admin_only_metrics_present(self):
+        stats = self._stats(self.admin)
+        for key in ('activeUsers', 'activeSellers', 'newCustomers', 'totalCustomers', 'totalSellers'):
+            self.assertIn(key, stats)

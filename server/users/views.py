@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -12,12 +13,12 @@ from .serializers import (
     CustomTokenObtainPairSerializer,
     CustomerRegisterSerializer,
     RegisterSerializer,
+    SellerDetailSerializer,
     SellerRequestReviewSerializer,
     SellerRequestSerializer,
     SellerSerializer,
     UserSerializer,
 )
-from .services import ensure_admin_shop
 
 User = get_user_model()
 
@@ -104,17 +105,47 @@ class ProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def get_object(self):
-        user = self.request.user
-        ensure_admin_shop(user)
-        return user
+        return self.request.user
+
+
+class SellerIdPhotoUploadView(APIView):
+    """Multipart upload of the seller's ID document photo."""
+
+    permission_classes = (permissions.IsAuthenticated,)
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request):
+        if getattr(request.user, "role", "") != "Seller":
+            return Response({"detail": "Only seller accounts can upload an ID photo."}, status=403)
+
+        upload = request.FILES.get("file") or request.FILES.get("image")
+        if not upload:
+            return Response({"detail": "Attach the photo as 'file'."}, status=400)
+        if upload.size > 5 * 1024 * 1024:
+            return Response({"detail": "Photo must be smaller than 5 MB."}, status=400)
+        if not str(upload.content_type or "").startswith("image/"):
+            return Response({"detail": "Only image files are allowed."}, status=400)
+
+        profile, _ = SellerProfile.objects.get_or_create(user=request.user)
+        if profile.id_photo:
+            profile.id_photo.delete(save=False)
+        profile.id_photo = upload
+        profile.save(update_fields=["id_photo"])
+
+        return Response({"id_photo": request.build_absolute_uri(profile.id_photo.url)})
 
 
 class SellerViewSet(viewsets.ModelViewSet):
     serializer_class = SellerSerializer
     permission_classes = [IsMainAdmin]
 
+    def get_serializer_class(self):
+        if self.action in ["retrieve", "update_status"]:
+            return SellerDetailSerializer
+        return SellerSerializer
+
     def get_queryset(self):
-        return User.objects.filter(role="Seller").select_related("seller_profile")
+        return User.objects.filter(role="Seller").select_related("seller_profile").prefetch_related("shops")
 
     @action(detail=True, methods=["put"])
     def update_status(self, request, pk=None):
@@ -128,9 +159,17 @@ class SellerViewSet(viewsets.ModelViewSet):
                 profile.status = next_status
             if verified is not None:
                 profile.verified = verified
+            if next_status or verified is not None:
+                from django.utils import timezone
+
+                profile.reviewed_at = timezone.now()
+                profile.reviewed_by = request.user
+                note = request.data.get("review_note")
+                if note is not None:
+                    profile.review_note = str(note).strip() or None
 
             profile.save()
-            return Response({"status": "status updated"})
+            return Response(self.get_serializer(seller).data)
         except SellerProfile.DoesNotExist:
             return Response({"error": "Profile not found"}, status=404)
 

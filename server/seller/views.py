@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from orders.models import Order, OrderItem
+from orders.models import Order, OrderItem, Refund, ReturnRequest
 from products.models import Product
 from users.roles import is_admin_user
 from reviews.models import Review  # Import from reviews app instead
@@ -485,20 +485,126 @@ class AnalyticsAPIView(APIView):
             },
         ]
 
-        return Response(
-            {
-                "stats": stats,
-                "weeklyTraffic": weekly_traffic,
-                "conversionTrend": monthly_rates,
-                "topPages": top_pages,
-                "meta": {
-                    "revenue": float(total_revenue),
-                    "orders": orders.count(),
-                    "products": products.count(),
-                    "customers": unique_visitors,
-                },
-            }
+        payload = {
+            "stats": stats,
+            "weeklyTraffic": weekly_traffic,
+            "conversionTrend": monthly_rates,
+            "topPages": top_pages,
+            "meta": {
+                "revenue": float(total_revenue),
+                "orders": orders.count(),
+                "products": products.count(),
+                "customers": unique_visitors,
+            },
+        }
+
+        if is_admin_user(seller):
+            payload["platform"] = self._platform_insights(revenue_expr)
+
+        return Response(payload)
+
+    def _platform_insights(self, revenue_expr):
+        """Marketplace-wide analytics shown only on the admin dashboard."""
+        today = timezone.now().date()
+
+        growth = []
+        month_start = today.replace(day=1)
+        month_starts = []
+        cursor = month_start
+        for _ in range(6):
+            month_starts.append(cursor)
+            cursor = (cursor - timedelta(days=1)).replace(day=1)
+        for start in reversed(month_starts):
+            end = (start + timedelta(days=32)).replace(day=1)
+            month_orders = Order.objects.filter(created_at__date__gte=start, created_at__date__lt=end)
+            growth.append(
+                {
+                    "month": start.strftime("%b"),
+                    "revenue": float(month_orders.aggregate(total=Sum("total_amount"))["total"] or 0),
+                    "orders": month_orders.count(),
+                    "newCustomers": User.objects.filter(
+                        role="Customer", date_joined__date__gte=start, date_joined__date__lt=end
+                    ).count(),
+                    "newSellers": User.objects.filter(
+                        role="Seller", date_joined__date__gte=start, date_joined__date__lt=end
+                    ).count(),
+                    "newProducts": Product.objects.filter(
+                        created_at__date__gte=start, created_at__date__lt=end
+                    ).count(),
+                }
+            )
+
+        category_rows = (
+            OrderItem.objects.filter(product__category_fk__isnull=False)
+            .values("product__category_fk__name")
+            .annotate(revenue=Sum(revenue_expr), sold=Sum("quantity"))
+            .order_by("-revenue")[:6]
         )
+        category_performance = [
+            {
+                "name": row["product__category_fk__name"],
+                "revenue": float(row["revenue"] or 0),
+                "sold": row["sold"] or 0,
+            }
+            for row in category_rows
+        ]
+
+        seller_rows = (
+            OrderItem.objects.filter(product__shop__seller__isnull=False)
+            .values("product__shop__seller_id", "product__shop__seller__username", "product__shop__name")
+            .annotate(revenue=Sum(revenue_expr), orders=Count("order", distinct=True))
+            .order_by("-revenue")[:5]
+        )
+        top_sellers = [
+            {
+                "id": row["product__shop__seller_id"],
+                "name": row["product__shop__seller__username"],
+                "shop": row["product__shop__name"],
+                "revenue": float(row["revenue"] or 0),
+                "orders": row["orders"] or 0,
+            }
+            for row in seller_rows
+        ]
+
+        product_rows = (
+            OrderItem.objects.filter(product__isnull=False)
+            .values("product_id", "product__title")
+            .annotate(revenue=Sum(revenue_expr), sold=Sum("quantity"))
+            .order_by("-revenue")[:5]
+        )
+        top_products = [
+            {
+                "id": row["product_id"],
+                "name": row["product__title"],
+                "revenue": float(row["revenue"] or 0),
+                "sold": row["sold"] or 0,
+            }
+            for row in product_rows
+        ]
+
+        refunds = Refund.objects.all()
+        total_orders = Order.objects.count()
+        refund_total = refunds.count()
+        return {
+            "growth": growth,
+            "categoryPerformance": category_performance,
+            "topSellers": top_sellers,
+            "topProducts": top_products,
+            "refunds": {
+                "total": refund_total,
+                "pending": refunds.filter(status__in=["requested", "under_review", "approved", "processing"]).count(),
+                "completed": refunds.filter(status="completed").count(),
+                "rejected": refunds.filter(status="rejected").count(),
+                "returnRequests": ReturnRequest.objects.count(),
+                "refundRate": round((refund_total / total_orders) * 100, 2) if total_orders else 0,
+            },
+            "totals": {
+                "customers": User.objects.filter(role="Customer").count(),
+                "sellers": User.objects.filter(role="Seller").count(),
+                "products": Product.objects.count(),
+                "orders": total_orders,
+            },
+        }
 
 
 class TransactionsAPIView(APIView):

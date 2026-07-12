@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "promotions",
     "chat",
     "importer",
+    "finance",
 ]
 
 MIDDLEWARE = [

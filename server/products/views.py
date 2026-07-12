@@ -4,15 +4,18 @@ from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
+from django.utils import timezone
 from django.utils.text import slugify
 
+from notifications.models import Notification
 from users.roles import is_admin_user, is_seller_user
-from users.services import ensure_admin_shop
 
-from .models import Category, Shop, Product
-from .serializers import CategorySerializer, ShopSerializer, ProductSerializer
+from .models import Category, Shop, Product, ShippingMethod
+from .serializers import CategorySerializer, ShopSerializer, ProductSerializer, ShippingMethodSerializer
 
-SELLER_MAX_SHOPS = 5
+SELLER_MAX_SHOPS = 1
+
+PRODUCT_MODERATION_STATUSES = {'Active', 'Draft', 'Suspended', 'Rejected'}
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -27,6 +30,43 @@ class CategoryViewSet(viewsets.ModelViewSet):
             # Only admins can create/update/delete categories
             permission_classes = [permissions.IsAdminUser]
         return [permission() for permission in permission_classes]
+
+
+class ShippingMethodViewSet(viewsets.ModelViewSet):
+    queryset = ShippingMethod.objects.all()
+    serializer_class = ShippingMethodSerializer
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            permission_classes = [permissions.AllowAny]
+        else:
+            permission_classes = [permissions.IsAuthenticated]
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        queryset = ShippingMethod.objects.all()
+        if self.action in ['list', 'retrieve'] and not (
+            self.request.user
+            and self.request.user.is_authenticated
+            and is_admin_user(self.request.user)
+        ):
+            return queryset.filter(is_enabled=True)
+        return queryset
+
+    def perform_create(self, serializer):
+        if not is_admin_user(self.request.user):
+            raise PermissionDenied("Only admins can manage shipping methods.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        if not is_admin_user(self.request.user):
+            raise PermissionDenied("Only admins can manage shipping methods.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not is_admin_user(self.request.user):
+            raise PermissionDenied("Only admins can manage shipping methods.")
+        instance.delete()
 
 
 class ShopViewSet(viewsets.ModelViewSet):
@@ -50,18 +90,13 @@ class ShopViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         if is_admin_user(user):
-            raise ValidationError("Main admin has one fixed Flypick shop and cannot create more shops.")
+            raise ValidationError("Admins manage the marketplace and cannot create seller shops.")
         if not is_seller_user(user):
             raise PermissionDenied("Only seller accounts can create shops.")
         if user.shops.count() >= SELLER_MAX_SHOPS:
-            raise ValidationError(f"Sellers can create a maximum of {SELLER_MAX_SHOPS} shops.")
+            raise ValidationError("Each seller account can create only one shop.")
 
         serializer.save(seller=self.request.user)
-
-    def perform_destroy(self, instance):
-        if is_admin_user(self.request.user) and instance.seller_id == self.request.user.id:
-            raise ValidationError("Main admin fixed Flypick shop cannot be deleted.")
-        super().perform_destroy(instance)
 
     @action(
         detail=False,
@@ -70,11 +105,42 @@ class ShopViewSet(viewsets.ModelViewSet):
         url_path="mine",
     )
     def mine(self, request):
-        if is_admin_user(request.user):
-            ensure_admin_shop(request.user)
         queryset = Shop.objects.filter(seller=request.user).order_by("id")
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(
+        detail=True,
+        methods=["put", "post"],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path="set-status",
+    )
+    def set_status(self, request, pk=None):
+        """Admin control: freeze (inactive) or unfreeze (active) a seller shop."""
+        if not is_admin_user(request.user):
+            raise PermissionDenied("Only admins can change a shop's status.")
+
+        shop = self.get_object()
+        next_status = request.data.get("status")
+        if next_status not in dict(Shop.STATUS_CHOICES):
+            raise ValidationError("Status must be 'active' or 'inactive'.")
+
+        shop.status = next_status
+        shop.save(update_fields=["status"])
+
+        reason = str(request.data.get("reason") or "").strip()
+        frozen = next_status == "inactive"
+        Notification.objects.create(
+            user=shop.seller,
+            title="Shop frozen by Flypick admin" if frozen else "Shop reactivated",
+            message=(
+                f"Your shop '{shop.name}' has been {'frozen' if frozen else 'reactivated'} by the marketplace admin."
+                + (f" Reason: {reason}" if reason else "")
+            ),
+            notification_type="system",
+            priority="high" if frozen else "medium",
+        )
+        return Response(self.get_serializer(shop).data)
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -162,20 +228,83 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(matched_product)
         return Response(serializer.data)
 
+    @action(
+        detail=True,
+        methods=["put", "post"],
+        permission_classes=[permissions.IsAuthenticated],
+        url_path="moderate",
+    )
+    def moderate(self, request, pk=None):
+        """Admin moderation: approve/reject/suspend/unpublish/feature a product."""
+        if not is_admin_user(request.user):
+            raise PermissionDenied("Only admins can moderate products.")
+
+        product = self.get_object()
+        next_status = request.data.get("status")
+        is_featured = request.data.get("is_featured")
+        reason = str(request.data.get("reason") or "").strip()
+
+        update_fields = []
+        if next_status is not None:
+            if next_status not in PRODUCT_MODERATION_STATUSES:
+                raise ValidationError(
+                    f"Status must be one of: {', '.join(sorted(PRODUCT_MODERATION_STATUSES))}."
+                )
+            product.status = next_status
+            update_fields.append("status")
+        if is_featured is not None:
+            product.is_featured = bool(is_featured)
+            update_fields.append("is_featured")
+
+        if not update_fields:
+            raise ValidationError("Provide 'status' and/or 'is_featured' to moderate a product.")
+
+        moderation_log = {
+            "action": next_status or ("featured" if product.is_featured else "unfeatured"),
+            "reason": reason,
+            "moderator": request.user.username,
+            "at": timezone.now().isoformat(),
+        }
+        variants = product.variants if isinstance(product.variants, dict) else {}
+        history = variants.get("moderation_history")
+        history = history if isinstance(history, list) else []
+        history.append(moderation_log)
+        variants["moderation_history"] = history[-20:]
+        product.variants = variants
+        update_fields.append("variants")
+
+        update_fields.append("updated_at")
+        product.save(update_fields=update_fields)
+
+        status_titles = {
+            "Active": "Product approved",
+            "Rejected": "Product rejected",
+            "Suspended": "Product suspended",
+            "Draft": "Product unpublished",
+        }
+        Notification.objects.create(
+            user=product.shop.seller,
+            title=status_titles.get(next_status, "Product moderation update"),
+            message=(
+                f"'{product.title}' was reviewed by the Flypick admin team."
+                + (f" Status: {next_status}." if next_status else "")
+                + (f" Featured: {'yes' if product.is_featured else 'no'}." if is_featured is not None else "")
+                + (f" Reason: {reason}" if reason else "")
+            ),
+            notification_type="system",
+            priority="high" if next_status in {"Rejected", "Suspended"} else "medium",
+            product_id=product.id,
+        )
+
+        serializer = self.get_serializer(product)
+        return Response(serializer.data)
+
     def perform_create(self, serializer):
         user = self.request.user
         shop_id = self.request.data.get('shop')
 
         if is_admin_user(user):
-            if shop_id:
-                try:
-                    shop = Shop.objects.get(id=shop_id)
-                except Shop.DoesNotExist:
-                    raise ValidationError("Shop not found.")
-            else:
-                shop = ensure_admin_shop(user)
-            serializer.save(shop=shop)
-            return
+            raise ValidationError("Admins cannot create shop products. Product operations belong to sellers.")
 
         try:
             shop = Shop.objects.get(id=shop_id, seller=self.request.user)
@@ -184,8 +313,22 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise ValidationError("Shop not found or you don't own it.")
     
     def perform_update(self, serializer):
-        if not is_admin_user(self.request.user) and serializer.instance.shop.seller != self.request.user:
+        user = self.request.user
+        instance = serializer.instance
+        if not is_admin_user(user) and instance.shop.seller != user:
             raise PermissionDenied("You don't have permission to update this product.")
+
+        if not is_admin_user(user):
+            next_status = serializer.validated_data.get('status')
+            # Suspended (frozen) products are locked by the admin: sellers can
+            # still edit details but cannot change the status. Rejected products
+            # may be fixed and re-published by the seller without re-approval.
+            if instance.status == 'Suspended' and next_status and next_status != 'Suspended':
+                raise ValidationError(
+                    "This product was suspended by the marketplace admin. "
+                    "It can only be re-published after admin approval."
+                )
+
         serializer.save()
     
     def perform_destroy(self, instance):

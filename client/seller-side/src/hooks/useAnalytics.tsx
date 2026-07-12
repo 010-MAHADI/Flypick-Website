@@ -25,6 +25,36 @@ export interface TopPage {
   bounceRate: string;
 }
 
+export interface PlatformGrowthPoint {
+  month: string;
+  revenue: number;
+  orders: number;
+  newCustomers: number;
+  newSellers: number;
+  newProducts: number;
+}
+
+export interface PlatformInsights {
+  growth: PlatformGrowthPoint[];
+  categoryPerformance: { name: string; revenue: number; sold: number }[];
+  topSellers: { id: number; name: string; shop: string; revenue: number; orders: number }[];
+  topProducts: { id: number; name: string; revenue: number; sold: number }[];
+  refunds: {
+    total: number;
+    pending: number;
+    completed: number;
+    rejected: number;
+    returnRequests: number;
+    refundRate: number;
+  };
+  totals: {
+    customers: number;
+    sellers: number;
+    products: number;
+    orders: number;
+  };
+}
+
 export interface SellerAnalytics {
   stats: AnalyticsStat[];
   weeklyTraffic: WeeklyTrafficPoint[];
@@ -36,6 +66,7 @@ export interface SellerAnalytics {
     products: number;
     customers: number;
   };
+  platform?: PlatformInsights;
 }
 
 export const useAnalytics = () =>

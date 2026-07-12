@@ -22,12 +22,15 @@ import SellerDetail from "./pages/SellerDetail";
 import Notifications from "./pages/Notifications";
 import Settings from "./pages/Settings";
 import Auth from "./pages/Auth";
-import Banners from "./pages/Banners";
 import SellerRequests from "./pages/SellerRequests";
 import ShopSelector from "./pages/ShopSelector";
 import CreateShop from "./pages/CreateShop";
 import Promotions from "./pages/Promotions";
 import ChatAdmin from "./pages/ChatAdmin";
+import Wallet from "./pages/Wallet";
+import FinanceAdmin from "./pages/FinanceAdmin";
+import AdminOrders from "./pages/AdminOrders";
+import AdminRefundRequests from "./pages/AdminRefundRequests";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -90,11 +93,15 @@ const App = () => (
               <Route path="/create-shop" element={<ProtectedRoute><RoleRoute roles={["Seller"]}><CreateShop /></RoleRoute></ProtectedRoute>} />
               <Route element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
                 <Route path="/" element={<Dashboard />} />
-                <Route path="/products" element={<Products />} />
-                <Route path="/products/new" element={<ProductForm />} />
-                <Route path="/products/import" element={<ProductImport />} />
-                <Route path="/products/:id/edit" element={<ProductForm />} />
-                <Route path="/orders" element={<Orders />} />
+                <Route path="/products" element={<RoleRoute roles={["Seller"]}><Products /></RoleRoute>} />
+                <Route path="/products/new" element={<RoleRoute roles={["Seller"]}><ProductForm /></RoleRoute>} />
+                <Route path="/products/import" element={<RoleRoute roles={["Seller"]}><ProductImport /></RoleRoute>} />
+                <Route path="/products/:id/edit" element={<RoleRoute roles={["Seller"]}><ProductForm /></RoleRoute>} />
+                <Route path="/orders" element={<RoleRoute roles={["Seller"]}><Orders /></RoleRoute>} />
+                <Route path="/wallet" element={<RoleRoute roles={["Seller"]}><Wallet /></RoleRoute>} />
+                <Route path="/finance" element={<RoleRoute roles={["Admin"]}><FinanceAdmin /></RoleRoute>} />
+                <Route path="/admin-orders" element={<RoleRoute roles={["Admin"]}><AdminOrders /></RoleRoute>} />
+                <Route path="/refund-requests" element={<RoleRoute roles={["Admin"]}><AdminRefundRequests /></RoleRoute>} />
                 <Route path="/analytics" element={<Analytics />} />
                 <Route path="/coupons" element={<Coupons />} />
                 <Route path="/notifications" element={<Notifications />} />
@@ -107,7 +114,6 @@ const App = () => (
                 <Route path="/sellers" element={<RoleRoute roles={["Admin"]}><Sellers /></RoleRoute>} />
                 <Route path="/sellers/:id" element={<RoleRoute roles={["Admin"]}><SellerDetail /></RoleRoute>} />
                 <Route path="/seller-requests" element={<RoleRoute roles={["Admin"]}><SellerRequests /></RoleRoute>} />
-                <Route path="/banners" element={<RoleRoute roles={["Admin"]}><Banners /></RoleRoute>} />
                 <Route path="/chat" element={<RoleRoute roles={["Admin"]}><ChatAdmin /></RoleRoute>} />
               </Route>
               <Route path="*" element={<NotFound />} />

@@ -3,13 +3,13 @@ import {
   Bell,
   CreditCard,
   FolderTree,
-  Image,
   Import,
   LayoutDashboard,
   LogOut,
   Megaphone,
   MessageCircle,
   Package,
+  RotateCcw,
   Settings,
   ShieldCheck,
   ShoppingCart,
@@ -18,6 +18,7 @@ import {
   Tag,
   UserPlus,
   Users,
+  Wallet,
   Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -39,9 +40,7 @@ import { useAuth } from "@/context/AuthContext";
 
 const adminMainNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Products", url: "/products", icon: Package },
-  { title: "Import Product", url: "/products/import", icon: Import },
-  { title: "Orders", url: "/orders", icon: ShoppingCart },
+  { title: "Orders", url: "/admin-orders", icon: ShoppingCart },
   { title: "Customers", url: "/customers", icon: Users },
   { title: "Categories", url: "/categories", icon: FolderTree },
   { title: "Reviews", url: "/reviews", icon: Star },
@@ -51,8 +50,9 @@ const adminMainNav = [
 
 const adminCommerceNav = [
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
+  { title: "Finance", url: "/finance", icon: Wallet },
+  { title: "Refund Requests", url: "/refund-requests", icon: RotateCcw },
   { title: "Coupons", url: "/coupons", icon: Tag },
-  { title: "Banners", url: "/banners", icon: Image },
   { title: "Promotions", url: "/promotions", icon: Megaphone },
   { title: "Transactions", url: "/transactions", icon: CreditCard },
   { title: "Live Chat", url: "/chat", icon: MessageCircle },
@@ -63,6 +63,7 @@ const sellerMainNav = [
   { title: "Products", url: "/products", icon: Package },
   { title: "Import Product", url: "/products/import", icon: Import },
   { title: "Orders", url: "/orders", icon: ShoppingCart },
+  { title: "Wallet", url: "/wallet", icon: Wallet },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Coupons", url: "/coupons", icon: Tag },
   { title: "Promotions", url: "/promotions", icon: Megaphone },

@@ -9,7 +9,6 @@ from rest_framework.views import APIView
 
 from products.models import Category, Product, ProductImage, Shop
 from users.roles import is_admin_user, is_seller_user
-from users.services import ensure_admin_shop
 
 from .engine import run_import
 from .exceptions import ImporterError
@@ -169,12 +168,7 @@ class ImportSaveView(APIView):
     @staticmethod
     def _resolve_shop(user, shop_id):
         if is_admin_user(user):
-            if shop_id:
-                try:
-                    return Shop.objects.get(id=shop_id)
-                except Shop.DoesNotExist:
-                    raise ImporterError('Shop not found.')
-            return ensure_admin_shop(user)
+            raise ImporterError('Admins cannot import products into a shop. Product operations belong to sellers.')
         if not shop_id:
             raise ImporterError('Select a shop before saving the imported product.')
         try:

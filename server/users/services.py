@@ -1,33 +1,16 @@
-from products.models import Shop
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .roles import is_admin_user
 
-ADMIN_DEFAULT_SHOP_NAME = "Flypick"
-ADMIN_DEFAULT_SHOP_CATEGORY = "Marketplace"
-ADMIN_DEFAULT_SHOP_DESCRIPTION = "Main Flypick admin storefront."
-
 
 def ensure_admin_shop(user):
-    if not is_admin_user(user):
-        return None
+    """Deprecated compatibility shim.
 
-    shop = (
-        Shop.objects.filter(seller=user)
-        .order_by("id")
-        .first()
-    )
-    if shop:
-        return shop
-
-    return Shop.objects.create(
-        seller=user,
-        name=ADMIN_DEFAULT_SHOP_NAME,
-        category=ADMIN_DEFAULT_SHOP_CATEGORY,
-        description=ADMIN_DEFAULT_SHOP_DESCRIPTION,
-        status="active",
-    )
+    Admins are platform managers, not sellers. Keep this function as a no-op
+    while older imports are removed so profile/login calls never create a shop.
+    """
+    return None
 
 
 def assert_user_can_authenticate(user):
@@ -44,9 +27,6 @@ def assert_user_can_authenticate(user):
             raise AuthenticationFailed("Your seller account is suspended.")
         if profile.status != "active":
             raise AuthenticationFailed("Your seller account is not active.")
-
-    if is_admin_user(user):
-        ensure_admin_shop(user)
 
     return user
 

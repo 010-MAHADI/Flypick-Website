@@ -1,11 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CategoryViewSet, ShopViewSet, ProductViewSet
+from .views import CategoryViewSet, ShopViewSet, ProductViewSet, ShippingMethodViewSet
 from .upload_views import upload_product_image, upload_product_video, upload_multiple_images
 from .category_upload_views import upload_category_image
 
 router = DefaultRouter()
 router.register(r'categories', CategoryViewSet)
+router.register(r'shipping-methods', ShippingMethodViewSet, basename='shipping-method')
 router.register(r'shops', ShopViewSet)
 router.register(r'', ProductViewSet)
 

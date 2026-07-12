@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import Category, Shop, Product, ProductImage, ProductVideo
+from .models import Category, Shop, Product, ProductImage, ProductVideo, ShippingMethod
 
 class CategoryAdminForm(forms.ModelForm):
     """Custom form to ensure proper file upload widget"""
@@ -72,4 +72,12 @@ class ProductVideoAdmin(admin.ModelAdmin):
     list_display = ['product', 'sort_order', 'created_at']
     list_filter = ['created_at']
     list_editable = ['sort_order']
+
+
+@admin.register(ShippingMethod)
+class ShippingMethodAdmin(admin.ModelAdmin):
+    list_display = ['name', 'delivery_charge', 'estimated_delivery_time', 'is_enabled', 'sort_order', 'updated_at']
+    list_filter = ['is_enabled']
+    search_fields = ['name', 'description', 'estimated_delivery_time']
+    list_editable = ['delivery_charge', 'is_enabled', 'sort_order']
 

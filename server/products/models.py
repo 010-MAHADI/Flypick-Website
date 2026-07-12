@@ -31,11 +31,25 @@ class Shop(models.Model):
         ('active', 'Active'),
         ('inactive', 'Inactive'),
     )
+    SETUP_STATUS_CHOICES = (
+        ('submitted', 'Submitted'),
+        ('approved', 'Approved'),
+        ('needs_changes', 'Needs Changes'),
+    )
     seller = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shops')
     name = models.CharField(max_length=255)
+    logo = models.CharField(max_length=64, blank=True, default='')
     category = models.CharField(max_length=255)  # Will be changed to ForeignKey later
     category_fk = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='shops_new')
     description = models.TextField(blank=True, null=True)
+    shop_address = models.TextField(blank=True, default='')
+    national_id = models.CharField(max_length=255, blank=True, default='')
+    trade_license = models.CharField(max_length=255, blank=True, default='')
+    tax_information = models.CharField(max_length=255, blank=True, default='')
+    bank_information = models.TextField(blank=True, default='')
+    mobile_banking = models.TextField(blank=True, default='')
+    payout_method = models.CharField(max_length=80, blank=True, default='')
+    setup_status = models.CharField(max_length=20, choices=SETUP_STATUS_CHOICES, default='submitted')
     sender_name = models.CharField(max_length=255, blank=True, null=True)
     sender_mobile_no = models.CharField(max_length=20, blank=True, null=True)
     sender_village = models.CharField(max_length=255, blank=True, null=True)
@@ -113,6 +127,23 @@ class Product(models.Model):
                 super().save(update_fields=['sku'])
         else:
             super().save(*args, **kwargs)
+
+
+class ShippingMethod(models.Model):
+    name = models.CharField(max_length=120)
+    delivery_charge = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    estimated_delivery_time = models.CharField(max_length=80)
+    description = models.TextField(blank=True, default='')
+    is_enabled = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        return self.name
 
 
 class ProductImage(models.Model):

@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { useShop } from "@/context/ShopContext";
 
-const MAX_SHOPS = 5;
+const MAX_SHOPS = 1;
 
 export default function ShopSelector() {
   const { user } = useAuth();
@@ -48,7 +48,7 @@ export default function ShopSelector() {
             </div>
           </div>
           <h1 className="text-3xl font-bold mb-2">Select Your Shop</h1>
-          <p className="text-muted-foreground">Choose a shop to manage. You can create up to 5 shops.</p>
+          <p className="text-muted-foreground">Choose your shop to manage. Each seller account can own one shop.</p>
         </div>
 
         {isLoading ? (
@@ -106,7 +106,7 @@ export default function ShopSelector() {
         ) : (
           <Card className="p-6 border-dashed border-2">
             <p className="text-center text-sm text-muted-foreground">
-              Shop limit reached. You can create up to {MAX_SHOPS} shops.
+              Shop limit reached. Each seller account can create only one shop.
             </p>
           </Card>
         )}

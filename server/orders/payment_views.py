@@ -32,6 +32,17 @@ UDDOKTAPAY_API_KEY = getattr(settings, 'UDDOKTAPAY_API_KEY', '')
 CHECKOUT_URL = f"{UDDOKTAPAY_BASE_URL}/checkout-v2"
 VERIFY_URL = f"{UDDOKTAPAY_BASE_URL}/verify-payment"
 
+# Payment & service charge (2% + 0.5%) added ONLY at the payment gateway so the
+# customer pays exactly what the checkout page shows. It is never stored on the
+# order or recorded in the ledger — the order value stays the goods total.
+SERVICE_CHARGE_RATE = Decimal('0.025')
+
+
+def gateway_charge_amount(order):
+    """The amount to charge at the gateway = order total + 2.5% service charge."""
+    total = Decimal(str(order.total_amount or 0))
+    return (total + (total * SERVICE_CHARGE_RATE)).quantize(Decimal('0.01'))
+
 
 def _send_order_notifications_safe(order):
     """Send order emails — called only after payment is confirmed. Safe to call once."""
@@ -42,6 +53,32 @@ def _send_order_notifications_safe(order):
         logger.info("Post-payment notifications sent for order %s", order.order_id)
     except Exception as exc:
         logger.error("Failed to send post-payment notifications for order %s: %s", order.order_id, exc)
+
+
+def _record_payment_callback(*, invoice_id, order_id, kind, reported_status, payload):
+    """Append-only record of gateway callbacks (payment_callbacks table)."""
+    try:
+        from finance.models import PaymentCallback, PaymentRecord
+        PaymentCallback.objects.create(
+            gateway='uddoktapay', invoice_id=invoice_id or '', order_id=order_id or '',
+            kind=kind, reported_status=(reported_status or '')[:40],
+            payload=payload if isinstance(payload, dict) else {},
+        )
+        if invoice_id and reported_status:
+            status_map = {'completed': 'paid', 'success': 'paid',
+                          'cancelled': 'failed', 'failed': 'failed', 'refunded': 'refunded'}
+            mapped = status_map.get(reported_status)
+            if mapped:
+                from django.utils import timezone
+                record = PaymentRecord.objects.filter(invoice_id=invoice_id).first()
+                if record and record.status not in ('paid', 'refunded'):
+                    record.status = mapped
+                    if mapped == 'paid':
+                        record.verified_at = timezone.now()
+                    record.raw_response = payload if isinstance(payload, dict) else {}
+                    record.save(update_fields=['status', 'verified_at', 'raw_response', 'updated_at'])
+    except Exception:
+        logger.exception("Failed to record payment callback for invoice %s", invoice_id)
 
 
 def _frontend_url(path: str) -> str:
@@ -116,10 +153,15 @@ class InitiatePaymentView(APIView):
         redirect_url = f"{base}/payment/success?order_id={order.order_id}"
         cancel_url = f"{base}/payment/cancel?order_id={order.order_id}"
 
+        # Charge the goods total plus the 2.5% payment & service charge, so the
+        # customer pays exactly what the checkout page showed. The order itself
+        # still records only the goods total.
+        charge_amount = gateway_charge_amount(order)
+
         payload = {
             'full_name': order.shipping_full_name or customer.get_full_name() or customer.username,
             'email': customer.email,
-            'amount': str(order.total_amount),
+            'amount': str(charge_amount),
             'metadata': {
                 'order_id': order.order_id,
                 'customer_id': str(customer.id),
@@ -135,7 +177,8 @@ class InitiatePaymentView(APIView):
             'accept': 'application/json',
         }
 
-        logger.info("Initiating UddoktaPay for order %s, amount=%s", order.order_id, order.total_amount)
+        logger.info("Initiating UddoktaPay for order %s, amount=%s (goods %s + 2.5%% service charge)",
+                    order.order_id, charge_amount, order.total_amount)
 
         resp = requests.post(CHECKOUT_URL, json=payload, headers=headers, timeout=30)
 
@@ -151,12 +194,19 @@ class InitiatePaymentView(APIView):
         if not payment_url:
             raise RuntimeError(f"No payment_url in UddoktaPay response: {data}")
 
-        # Store the UddoktaPay invoice ID if returned
-        invoice_id = data.get('invoice_id') or data.get('id') or ''
-        if invoice_id:
-            # Store it in coupon_code field temporarily as a side-channel
-            # (better: add a dedicated field via migration)
-            pass
+        # Record the payment attempt (payments table — spec Part 3 §4)
+        try:
+            from finance.models import PaymentRecord
+            PaymentRecord.objects.create(
+                order=order,
+                gateway='uddoktapay',
+                invoice_id=data.get('invoice_id') or data.get('id') or '',
+                amount=order.total_amount,
+                status='pending',
+                raw_response={'payment_url': payment_url},
+            )
+        except Exception:
+            logger.exception("Failed to create PaymentRecord for order %s", order.order_id)
 
         logger.info(
             "UddoktaPay payment_url obtained for order %s: %s",
@@ -215,13 +265,17 @@ class VerifyPaymentView(APIView):
 
         payment_status_raw = verification.get('status', '').lower()
         logger.info("Verify endpoint: invoice=%s status=%s order=%s", invoice_id, payment_status_raw, order_id)
+        _record_payment_callback(
+            invoice_id=invoice_id, order_id=order_id, kind='verify',
+            reported_status=payment_status_raw, payload=verification)
 
         if payment_status_raw in ('completed', 'success'):
             was_already_paid = order.payment_status == 'paid'
             order.payment_status = 'paid'
-            if order.status == 'pending':
-                order.status = 'processing'
-            order.save(update_fields=['payment_status', 'status'])
+            # Keep the order Pending after payment: it becomes visible to the
+            # seller (who works it from the Pending tab) and stays customer-
+            # cancellable until the seller starts processing it.
+            order.save(update_fields=['payment_status'])
 
             if not was_already_paid:
                 _send_order_notifications_safe(order)
@@ -323,6 +377,11 @@ class UddoktaPayIPNView(APIView):
             or request.POST.get('order_id')
         )
 
+        # Store every callback for the audit trail / duplicate analysis
+        _record_payment_callback(
+            invoice_id=invoice_id, order_id=order_id or '', kind='ipn',
+            reported_status=payment_status_raw, payload=verification)
+
         if not order_id:
             logger.error("Cannot determine order_id from IPN. invoice=%s data=%s", invoice_id, request.data)
             return Response({'status': 'error', 'message': 'No order_id'}, status=400)
@@ -337,9 +396,8 @@ class UddoktaPayIPNView(APIView):
         if payment_status_raw in ('completed', 'success'):
             was_already_paid = order.payment_status == 'paid'
             order.payment_status = 'paid'
-            if order.status == 'pending':
-                order.status = 'processing'
-            order.save(update_fields=['payment_status', 'status'])
+            # Keep the order Pending after payment (see VerifyPaymentView).
+            order.save(update_fields=['payment_status'])
             logger.info("Order %s payment confirmed via IPN.", order_id)
 
             # Only send notifications once — skip if already paid (duplicate IPN)
@@ -404,9 +462,8 @@ class PaymentSuccessView(APIView):
                     if payment_status_raw in ('completed', 'success'):
                         was_already_paid = order.payment_status == 'paid'
                         order.payment_status = 'paid'
-                        if order.status == 'pending':
-                            order.status = 'processing'
-                        order.save(update_fields=['payment_status', 'status'])
+                        # Keep the order Pending after payment (see above).
+                        order.save(update_fields=['payment_status'])
                         # Send notifications if not already done by IPN
                         if not was_already_paid:
                             _send_order_notifications_safe(order)

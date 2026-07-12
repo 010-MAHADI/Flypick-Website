@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Filter, Edit, Download, BarChart3, TrendingUp, TrendingDown, Eye, ShoppingCart, DollarSign, Star, X, Package, Link2 } from "lucide-react";
+import { Plus, Search, Filter, Edit, Download, BarChart3, TrendingUp, TrendingDown, Eye, ShoppingCart, DollarSign, Star, X, Package, Link2, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,8 @@ const statusClass: Record<string, string> = {
   Active: "status-badge status-badge--success",
   Draft: "status-badge status-badge--warning",
   "Out of Stock": "status-badge status-badge--destructive",
+  Suspended: "status-badge status-badge--destructive",
+  Rejected: "status-badge status-badge--destructive",
 };
 
 export default function Products() {
@@ -49,6 +51,7 @@ export default function Products() {
   const activeCount = products.filter((p) => p.status === "Active").length;
   const outCount = products.filter((p) => p.status === "Out of Stock").length;
   const draftCount = products.filter((p) => p.status === "Draft").length;
+  const flaggedCount = products.filter((p) => p.status === "Suspended" || p.status === "Rejected").length;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -70,13 +73,25 @@ export default function Products() {
         </div>
       </div>
 
+      {flaggedCount > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="text-sm">
+            <span className="font-semibold">{flaggedCount} product{flaggedCount > 1 ? "s" : ""}</span> {flaggedCount > 1 ? "were" : "was"} suspended or rejected by the marketplace admin.
+            The admin&apos;s reason is shown on each card. Rejected products can be fixed and re-published;
+            suspended products stay unpublished until an admin approves them again.
+          </p>
+        </div>
+      )}
+
       {/* Product KPI strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
           { label: "Total", value: products.length, tone: "bg-primary/10 text-primary", icon: Package },
           { label: "Active", value: activeCount, tone: "bg-success/10 text-success", icon: TrendingUp },
           { label: "Drafts", value: draftCount, tone: "bg-warning/10 text-warning", icon: Edit },
           { label: "Out of Stock", value: outCount, tone: "bg-destructive/10 text-destructive", icon: X },
+          { label: "Suspended / Rejected", value: flaggedCount, tone: "bg-destructive/10 text-destructive", icon: AlertTriangle },
         ].map((s) => (
           <div key={s.label} className="stat-card flex items-center gap-3">
             <div className={`rounded-xl p-2.5 ${s.tone}`}>
@@ -139,12 +154,19 @@ export default function Products() {
                 </Button>
               </div>
               {/* Status badge */}
-              <span className={`absolute top-3 left-3 ${statusClass[product.status]}`}>{product.status}</span>
+              <span className={`absolute top-3 left-3 ${statusClass[product.status] || "status-badge status-badge--info"}`}>
+                {product.status === "Suspended" ? "Frozen by Admin" : product.status}
+              </span>
             </div>
             {/* Info */}
             <div className="p-4 flex flex-col flex-1">
               <h3 className="font-semibold text-sm line-clamp-2 mb-1">{product.name}</h3>
               <p className="text-xs text-muted-foreground mb-3">{product.sku} · {product.category}</p>
+              {(product.status === "Suspended" || product.status === "Rejected") && product.moderation?.reason ? (
+                <p className="mb-3 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-[11px] leading-relaxed text-destructive">
+                  <span className="font-semibold">Admin reason:</span> {product.moderation.reason}
+                </p>
+              ) : null}
               <div className="mt-auto flex items-center justify-between pt-3 border-t border-border/60">
                 <span className="font-bold text-base">${product.price.toFixed(2)}</span>
                 <span className="text-xs text-muted-foreground font-medium">{product.stock} in stock</span>

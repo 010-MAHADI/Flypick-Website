@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 
+export interface ProductModeration {
+    action?: string | null;
+    reason?: string;
+    at?: string | null;
+}
+
 export interface Product {
     id: number;
     name: string;
@@ -8,8 +14,9 @@ export interface Product {
     category: string;
     price: number;
     stock: number;
-    status: "Active" | "Draft" | "Out of Stock";
+    status: string;
     image: string | null;
+    moderation?: ProductModeration | null;
     sold?: number;
     views?: number;
     rating?: number;
@@ -56,6 +63,7 @@ export const useProductsAdmin = (shopId?: string) => {
                     stock: p.stock || 100, // Mocking stock as it doesn't exist in current models
                     status: p.status || "Active",
                     image: normalizeMediaUrl(p.image_url || p.image),
+                    moderation: p.moderation || null,
                     sold: p.sold_count || 0,
                     views: (p.reviews_count || 0) * 5,
                     rating: p.rating || 0,

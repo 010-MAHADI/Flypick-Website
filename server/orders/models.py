@@ -69,9 +69,22 @@ class Order(models.Model):
     # Pricing
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     shipping_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    shipping_method = models.CharField(max_length=120, blank=True, default='')
+    shipping_estimated_delivery = models.CharField(max_length=80, blank=True, default='')
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     coupon_code = models.CharField(max_length=50, blank=True, null=True)
+    # Split of `discount` needed for per-seller settlement:
+    # the seller-coupon part reduces only the owning seller's items,
+    # the admin-coupon part is compensated to sellers from Platform Balance.
+    seller_coupon_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    admin_coupon_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    coupon_seller = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                      null=True, blank=True, related_name='coupon_orders')
     store_credit_used = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    # Hidden internal platform charge (0.5%) baked into total_amount for online
+    # payments. Never exposed in any order serializer — only the admin ledger
+    # (Platform Balance history) records it. COD orders keep this at 0.
+    platform_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     # Status
@@ -124,6 +137,8 @@ class OrderItem(models.Model):
     color = models.CharField(max_length=50, blank=True, null=True)
     size = models.CharField(max_length=50, blank=True, null=True)
     shipping_type = models.CharField(max_length=100, blank=True, null=True)
+    shipping_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    shipping_estimated_delivery = models.CharField(max_length=80, blank=True, default='')
     
     quantity = models.PositiveIntegerField(default=1)
     price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -234,10 +249,30 @@ class Refund(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='requested')
     reason = models.CharField(max_length=255, blank=True)
 
+    # How the refund case was opened, so the UI/queues can distinguish a
+    # cancellation refund (pending order) from a return refund (delivered order).
+    ORIGIN_CHOICES = (
+        ('cancellation', 'Order Cancellation'),
+        ('return', 'Return Request'),
+        ('manual', 'Manual / Other'),
+    )
+    origin = models.CharField(max_length=20, choices=ORIGIN_CHOICES, default='manual')
+
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name='requested_refunds')
     processed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name='processed_refunds')
+
+    # Settlement (manual completion) details. Required to complete an
+    # original-payment-method refund: the seller settles COD refunds, the admin
+    # settles online refunds. Store-credit refunds complete instantly and need
+    # no settlement.
+    settlement_transaction_id = models.CharField(max_length=120, blank=True, default='')
+    settlement_proof = models.ImageField(upload_to='refund_proofs/', null=True, blank=True)
+    settlement_note = models.CharField(max_length=500, blank=True, default='')
+    settled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name='settled_refunds')
+    settled_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -248,6 +283,22 @@ class Refund(models.Model):
 
     def __str__(self):
         return f'Refund {self.refund_id} ({self.status}) for {self.order.order_id}'
+
+    @property
+    def is_cod_order(self):
+        return (self.order.payment_method or '').lower() in ('cod', 'cash_on_delivery')
+
+    @property
+    def settlement_owner(self):
+        """Who must manually complete this refund.
+
+        - store_credit  -> 'none'   (completes instantly on approval)
+        - original/COD   -> 'seller' (seller returns cash, records txn id)
+        - original/online-> 'admin'  (admin does the gateway refund)
+        """
+        if self.method == 'store_credit':
+            return 'none'
+        return 'seller' if self.is_cod_order else 'admin'
 
 
 class RefundEvent(models.Model):

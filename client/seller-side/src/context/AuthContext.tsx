@@ -13,6 +13,11 @@ interface SellerProfile {
     zilla?: string | null;
     location?: string | null;
     address?: string | null;
+    business_name?: string | null;
+    idDocument?: string | null;
+    id_photo?: string | null;
+    bankAccount?: string | null;
+    verified?: boolean;
 }
 
 interface User {

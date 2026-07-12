@@ -1,5 +1,64 @@
 from rest_framework import serializers
-from .models import Category, Shop, Product
+from decimal import Decimal, InvalidOperation
+
+from .models import Category, Shop, Product, ShippingMethod
+
+
+class ShippingMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShippingMethod
+        fields = [
+            'id',
+            'name',
+            'delivery_charge',
+            'estimated_delivery_time',
+            'description',
+            'is_enabled',
+            'sort_order',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+def normalize_product_shipping_options(product):
+    variants = product.variants if isinstance(product.variants, dict) else {}
+    saved_options = variants.get('shippingOptions')
+    saved_options = saved_options if isinstance(saved_options, list) else []
+    saved_by_id = {
+        str(option.get('methodId') or option.get('method_id') or ''): option
+        for option in saved_options
+        if isinstance(option, dict) and (option.get('methodId') or option.get('method_id'))
+    }
+    saved_by_name = {
+        str(option.get('type') or option.get('name') or '').strip().lower(): option
+        for option in saved_options
+        if isinstance(option, dict)
+    }
+
+    methods = list(ShippingMethod.objects.filter(is_enabled=True).order_by('sort_order', 'id'))
+    if not methods and saved_options:
+        return saved_options
+
+    normalized = []
+    for index, method in enumerate(methods):
+        saved = saved_by_id.get(str(method.id)) or saved_by_name.get(method.name.strip().lower()) or {}
+        charge = saved.get('price', saved.get('delivery_charge', method.delivery_charge))
+        try:
+            charge = Decimal(str(charge if charge not in (None, '') else 0)).quantize(Decimal('0.01'))
+        except (InvalidOperation, TypeError, ValueError):
+            charge = Decimal('0.00')
+        default_enabled = index == 0 and method.name.strip().lower().startswith('standard')
+        normalized.append({
+            'methodId': method.id,
+            'type': method.name,
+            'price': str(charge),
+            'estimatedDelivery': saved.get('estimatedDelivery') or saved.get('estimated_delivery_time') or method.estimated_delivery_time,
+            'description': saved.get('description') or method.description,
+            'enabled': bool(saved.get('enabled', default_enabled)),
+            'freeShipping': charge == 0,
+        })
+    return normalized
 
 class CategorySerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField(read_only=True)
@@ -32,6 +91,7 @@ class ProductSerializer(serializers.ModelSerializer):
     video_url = serializers.SerializerMethodField()
     image_gallery = serializers.SerializerMethodField()
     video_gallery = serializers.SerializerMethodField()
+    moderation = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -76,6 +136,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'warranty',
             'created_at',
             'updated_at',
+            'moderation',
         ]
         read_only_fields = [
             'shop',
@@ -88,6 +149,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'video_url',
             'image_gallery',
             'video_gallery',
+            'moderation',
         ]
     
     def to_representation(self, instance):
@@ -95,6 +157,10 @@ class ProductSerializer(serializers.ModelSerializer):
         variants JSON for everyone else (covers legacy imported products)."""
         data = super().to_representation(instance)
         variants = data.get('variants')
+        if not isinstance(variants, dict):
+            variants = {}
+        variants['shippingOptions'] = normalize_product_shipping_options(instance)
+        data['variants'] = variants
         if isinstance(variants, dict) and isinstance(variants.get('imported'), dict):
             request = self.context.get('request')
             user = getattr(request, 'user', None)
@@ -111,6 +177,21 @@ class ProductSerializer(serializers.ModelSerializer):
                 variants['imported'] = imported
                 data['variants'] = variants
         return data
+
+    def get_moderation(self, obj):
+        """Latest admin moderation entry (action/reason) so sellers can see
+        why a product was frozen or rejected."""
+        variants = obj.variants if isinstance(obj.variants, dict) else {}
+        history = variants.get('moderation_history')
+        if isinstance(history, list) and history:
+            entry = history[-1]
+            if isinstance(entry, dict):
+                return {
+                    'action': entry.get('action'),
+                    'reason': entry.get('reason') or '',
+                    'at': entry.get('at'),
+                }
+        return None
 
     def get_image_url(self, obj):
         """Return full URL for the image"""

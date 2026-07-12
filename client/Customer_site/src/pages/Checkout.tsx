@@ -21,6 +21,23 @@ interface PaymentMethods {
   credit_card: boolean;
 }
 
+const shippingKey = (item: { product: { id: number }; color?: string; size?: string }) =>
+  `${item.product.id}-${item.color || ""}-${item.size || ""}`;
+
+const availableShippingOptions = (product: any) => {
+  const options = Array.isArray(product.variants?.shippingOptions)
+    ? product.variants.shippingOptions.filter((option: any) => option.enabled)
+    : [];
+  if (options.length) return options;
+  return [{
+    type: "Standard Delivery",
+    price: product.freeShipping ? "0" : "60",
+    estimatedDelivery: "4-6 days",
+    enabled: true,
+    freeShipping: product.freeShipping,
+  }];
+};
+
 const Checkout = () => {
   const navigate = useNavigate();
   const { isLoggedIn } = useAuth();
@@ -42,66 +59,47 @@ const Checkout = () => {
     ? buyNowItem!.product.price * buyNowItem!.quantity
     : selectedTotal;
   const checkoutCount = isBuyNow ? buyNowItem!.quantity : selectedCount;
+  const [selectedShippingByKey, setSelectedShippingByKey] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setSelectedShippingByKey((current) => {
+      const next = { ...current };
+      checkoutItems.forEach((item) => {
+        const key = shippingKey(item);
+        const options = availableShippingOptions(item.product);
+        const requested = item.shippingType?.toLowerCase();
+        const requestedOption = options.find((option: any) => option.type?.toLowerCase() === requested);
+        const currentOption = options.find((option: any) => option.type?.toLowerCase() === next[key]?.toLowerCase());
+        if (!currentOption) {
+          next[key] = (requestedOption || options[0])?.type || "";
+        }
+      });
+      return next;
+    });
+  }, [isBuyNow, buyNowItem, selectedItems]);
+
+  const selectedShippingForItem = (item: typeof checkoutItems[number]) => {
+    const options = availableShippingOptions(item.product);
+    const selectedName = selectedShippingByKey[shippingKey(item)] || item.shippingType || options[0]?.type || "";
+    return options.find((option: any) => option.type?.toLowerCase() === selectedName.toLowerCase()) || options[0];
+  };
 
   // Calculate shipping costs from products
   const calculateShipping = () => {
     let totalShipping = 0;
-    const shippingDetails: Array<{ method: string; cost: number; time: string }> = [];
+    const shippingDetails: Array<{ key: string; product: string; method: string; cost: number; time: string }> = [];
 
     checkoutItems.forEach((item) => {
-      const product = item.product;
-      
-      // Check if product has free shipping
-      if (product.freeShipping) {
-        if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-          shippingDetails.push({ method: 'Free Shipping', cost: 0, time: '7-15 business days' });
-        }
-        return;
-      }
-
-      // Get shipping options from product variants
-      const shippingOptions = product.variants?.shippingOptions || [];
-      
-      if (shippingOptions.length > 0) {
-        // Try to find the shipping option that was selected by the user
-        let selectedOption = null;
-        
-        // Check if item has a selected shipping type
-        if (item.shippingType) {
-          selectedOption = shippingOptions.find((opt: any) => 
-            opt.enabled && opt.type.toLowerCase() === item.shippingType.toLowerCase()
-          );
-        }
-        
-        // If no selected option or not found, use first enabled option
-        if (!selectedOption) {
-          selectedOption = shippingOptions.find((opt: any) => opt.enabled);
-        }
-        
-        if (selectedOption) {
-          const cost = parseFloat(selectedOption.price) || 0;
-          totalShipping += cost * item.quantity;
-          
-          const existingMethod = shippingDetails.find(s => s.method === selectedOption.type);
-          if (!existingMethod) {
-            shippingDetails.push({
-              method: selectedOption.type,
-              cost: cost,
-              time: `${selectedOption.estimatedDelivery || '7-15'} business days`
-            });
-          }
-        } else {
-          // No enabled option, assume free
-          if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-            shippingDetails.push({ method: 'Standard Shipping', cost: 0, time: '7-15 business days' });
-          }
-        }
-      } else {
-        // No shipping options defined, assume free
-        if (shippingDetails.length === 0 || !shippingDetails.some(s => s.cost === 0)) {
-          shippingDetails.push({ method: 'Standard Shipping', cost: 0, time: '7-15 business days' });
-        }
-      }
+      const selectedOption = selectedShippingForItem(item);
+      const cost = parseFloat(selectedOption?.price || "0") || 0;
+      totalShipping += cost;
+      shippingDetails.push({
+        key: shippingKey(item),
+        product: item.product.title,
+        method: selectedOption?.type || "Shipping",
+        cost,
+        time: selectedOption?.estimatedDelivery || "Contact seller",
+      });
     });
 
     return { totalShipping, shippingDetails };
@@ -147,7 +145,8 @@ const Checkout = () => {
       // Prepare cart items for validation
       const cartItems = checkoutItems.map(item => ({
         product_id: item.product.id,
-        quantity: item.quantity
+        quantity: item.quantity,
+        shipping_type: selectedShippingForItem(item)?.type || '',
       }));
 
       const response = await api.post('/orders/orders/validate_coupon/', {
@@ -223,7 +222,19 @@ const Checkout = () => {
       ? Math.min(totalShipping, appliedCoupon.discount)  // For shipping coupons, use the discount value but cap at shipping cost
       : appliedCoupon.discount  // For percent and fixed coupons, use the pre-calculated discount_amount from backend
     : 0;
-  const finalTotal = Math.max(0, checkoutTotal + totalShipping - couponDiscount);
+  // Goods value (products + shipping - coupon). This is the order value shown
+  // on every other page (order detail, invoice, seller, admin).
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const finalTotal = round2(Math.max(0, checkoutTotal + totalShipping - couponDiscount));
+  const isOnlinePayment = paymentMethod !== "cod";
+  // Store credit (online only) reduces the amount paid; then online payments
+  // add a 2.5% (2% + 0.5%) payment & service charge at checkout ONLY — this is
+  // what the customer pays via the gateway. It is not recorded on the order.
+  const storeCreditApplied = useStoreCredit && isOnlinePayment
+    ? Math.min(walletBalance, finalTotal) : 0;
+  const payableGoods = round2(finalTotal - storeCreditApplied);
+  const serviceCharge = isOnlinePayment ? round2(payableGoods * 0.025) : 0;
+  const payableTotal = round2(payableGoods + serviceCharge);
 
   // Auto-select default address when addresses change
   useEffect(() => {
@@ -280,13 +291,13 @@ const Checkout = () => {
         coupon_code: appliedCoupon?.code || '',
         order_notes: orderNotes.trim(),
         delivery_instructions: deliveryInstructions.trim(),
-        use_store_credit: useStoreCredit && walletBalance > 0,
+        use_store_credit: useStoreCredit && walletBalance > 0 && paymentMethod !== "cod",
         items: checkoutItems.map((item) => ({
           product_id: item.product.id,
           quantity: item.quantity,
           color: item.color || '',
           size: item.size || '',
-          shipping_type: item.shippingType || '',
+          shipping_type: selectedShippingForItem(item)?.type || '',
         })),
       };
 
@@ -358,6 +369,10 @@ const Checkout = () => {
         // Check for specific field errors
         if (data.payment_method && Array.isArray(data.payment_method)) {
           errorMsg = data.payment_method[0];
+        } else if (data.coupon_code) {
+          errorMsg = Array.isArray(data.coupon_code) ? data.coupon_code[0] : String(data.coupon_code);
+        } else if (data.use_store_credit) {
+          errorMsg = Array.isArray(data.use_store_credit) ? data.use_store_credit[0] : String(data.use_store_credit);
         } else if (data.items && Array.isArray(data.items)) {
           errorMsg = data.items[0];
         } else if (data.detail) {
@@ -548,17 +563,38 @@ const Checkout = () => {
                 <h3 className="text-lg font-bold">Shipping</h3>
               </div>
               <div className="space-y-2">
-                {shippingDetails.map((detail, index) => (
-                  <div key={index} className="flex items-center justify-between text-sm p-3 bg-muted/50 rounded-lg">
-                    <div>
-                      <p className="font-medium">{detail.method}</p>
-                      <p className="text-xs text-muted-foreground">Estimated delivery: {detail.time}</p>
+                {checkoutItems.map((item) => {
+                  const options = availableShippingOptions(item.product);
+                  const selectedOption = selectedShippingForItem(item);
+                  return (
+                    <div key={shippingKey(item)} className="space-y-2 rounded-lg bg-muted/40 p-3">
+                      <p className="text-sm font-semibold line-clamp-1">{item.product.title}</p>
+                      <RadioGroup
+                        value={selectedOption?.type || ""}
+                        onValueChange={(value) => setSelectedShippingByKey((current) => ({ ...current, [shippingKey(item)]: value }))}
+                        className="space-y-2"
+                      >
+                        {options.map((option: any) => {
+                          const cost = parseFloat(option.price || "0") || 0;
+                          return (
+                            <div key={option.type} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
+                              <RadioGroupItem value={option.type} id={`${shippingKey(item)}-${option.type}`} />
+                              <Label htmlFor={`${shippingKey(item)}-${option.type}`} className="flex flex-1 cursor-pointer items-center justify-between gap-3">
+                                <span>
+                                  <span className="block text-sm font-medium">{option.type}</span>
+                                  <span className="block text-xs text-muted-foreground">{option.estimatedDelivery}</span>
+                                </span>
+                                <span className={cost === 0 ? "text-success font-bold" : "font-bold"}>
+                                  {cost === 0 ? "Free" : <><TakaSign />{cost.toLocaleString()}</>}
+                                </span>
+                              </Label>
+                            </div>
+                          );
+                        })}
+                      </RadioGroup>
                     </div>
-                    <span className={detail.cost === 0 ? "text-success font-bold" : "font-bold"}>
-                      {detail.cost === 0 ? 'Free' : <><TakaSign />{detail.cost.toLocaleString()}</>}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -632,6 +668,12 @@ const Checkout = () => {
                     {totalShipping === 0 ? 'Free' : <><TakaSign />{totalShipping.toLocaleString()}</>}
                   </span>
                 </div>
+                {isOnlinePayment && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Payment &amp; service charge (2.0% + 0.5%)</span>
+                    <span><TakaSign />{serviceCharge.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                )}
                 {appliedCoupon && (
                   <div className="flex justify-between text-success">
                     <span className="flex items-center gap-1">
@@ -683,13 +725,14 @@ const Checkout = () => {
                 )}
               </div>
 
-              {/* Store credit redemption */}
+              {/* Store credit redemption — online payments only, never COD */}
               {walletBalance > 0 && (
                 <div className="border-t border-border pt-3 mt-3">
-                  <label className="flex items-center gap-2.5 cursor-pointer">
+                  <label className={`flex items-center gap-2.5 ${paymentMethod === "cod" ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
                     <input
                       type="checkbox"
-                      checked={useStoreCredit}
+                      checked={useStoreCredit && paymentMethod !== "cod"}
+                      disabled={paymentMethod === "cod"}
                       onChange={(e) => setUseStoreCredit(e.target.checked)}
                       className="w-4 h-4 accent-[hsl(var(--primary))]"
                     />
@@ -701,10 +744,15 @@ const Checkout = () => {
                       <TakaSign />{walletBalance.toLocaleString()} available
                     </span>
                   </label>
-                  {useStoreCredit && (
+                  {paymentMethod === "cod" && (
+                    <p className="text-[11px] text-muted-foreground mt-1.5 ml-6">
+                      Store credit cannot be used with Cash on Delivery.
+                    </p>
+                  )}
+                  {storeCreditApplied > 0 && (
                     <div className="flex justify-between text-sm text-success mt-2">
                       <span>Store credit applied</span>
-                      <span>-<TakaSign />{Math.min(walletBalance, finalTotal).toLocaleString()}</span>
+                      <span>-<TakaSign />{storeCreditApplied.toLocaleString()}</span>
                     </div>
                   )}
                 </div>
@@ -714,17 +762,13 @@ const Checkout = () => {
                 <div className="flex justify-between font-bold text-lg">
                   <span>Total</span>
                   <span className="text-primary">
-                    <TakaSign />
-                    {(useStoreCredit
-                      ? Math.max(0, finalTotal - Math.min(walletBalance, finalTotal))
-                      : finalTotal
-                    ).toLocaleString()}
+                    <TakaSign />{payableTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 {couponDiscount > 0 && (
                   <p className="text-xs text-success font-medium mt-0.5">You save <TakaSign />{couponDiscount.toLocaleString()}!</p>
                 )}
-                <p className="text-xs text-muted-foreground mt-1">Tax excluded</p>
+                <p className="text-xs text-muted-foreground mt-1">Tax included</p>
               </div>
 
               <button
